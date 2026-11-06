@@ -1,0 +1,62 @@
+DRISHYAM SITE RELAY - connect this site's cameras to Drishyam
+================================================================
+
+WHAT IT DOES
+  Sends the cameras from this site's NVR / DVR to Drishyam, so they can be
+  watched and recorded from anywhere. Outbound and encrypted only: no static
+  IP, no port forwarding, no router changes.
+
+BEFORE YOU START
+  * Use a Windows 10/11 PC that stays switched on, on the SAME network as the NVR.
+    Install turns off sleep, lid-close sleep and Fast Startup on this PC.
+  * For power cuts: in the PC's BIOS set "Restore on AC Power Loss" (also called
+    "AC Recovery" / "After Power Loss") to "Power On", so the PC switches itself
+    back on when the power returns. Nothing else is needed - no login.
+  * Have the NVR password ready (the login of user 'admin').
+  * Internet upload: about 2-4 Mbps per camera.
+
+INSTALL (5 minutes)
+  1. Copy this whole folder onto that PC (for example to C:\DrishyamRelay).
+  2. Double-click  "1 - INSTALL Drishyam relay.bat"  and click YES on the
+     administrator prompt.
+  3. Type the NVR password when asked (typing is hidden; it is stored
+     encrypted on this PC only).
+  4. Type the short site name you were given (for example: poc).
+  5. Wait about one minute. It finds the cameras, starts sending them, and
+     shows a list of camera paths.
+  6. Send Drishyam the file:
+        C:\ProgramData\DrishyamRelay\drishyam-cameras.txt
+     (it contains NO passwords).
+
+That's it. After a restart, shutdown or power cut it starts again by itself as
+soon as Windows is up (nobody needs to log in), re-checks every 3 minutes, and
+repairs itself if the internet or NVR drops.
+
+OTHER BUTTONS
+  "2 - CHECK status.bat"   shows which cameras are streaming right now
+  "3 - TEST NVR only.bat"  checks the NVR and password, installs nothing
+  "4 - UNINSTALL.bat"      stops everything and removes it
+  "5 - SHOW logs.bat"      the last lines of every camera's log (no passwords) -
+                           send a photo or copy of this to Drishyam if cameras drop
+  "6 - CHECK missed footage.bat"  which minutes Drishyam is missing and what the NVR
+                           still has for them (changes nothing)
+
+MISSED FOOTAGE (power cut / internet down on this PC)
+  While this PC or its internet is off nothing reaches Drishyam, but the NVR keeps
+  recording. When the PC is back, the relay copies the missed minutes (last 24 h)
+  from the NVR's own recordings and uploads them, so playback in Drishyam has no
+  hole. It runs in the background, one camera at a time, only while live video is
+  fine, at up to 4 Mbps of upload - a long outage can take a few hours to catch up.
+  Works with Hikvision / Prama NVRs. If the NVR itself lost power, that footage
+  does not exist and cannot be recovered.
+
+IF SOMETHING GOES WRONG
+  "NVR does not answer"          -> this PC is not on the NVR's network
+  "RTSP port closed"             -> turn on RTSP in the NVR's network settings
+  "rejected the username/password"-> check the password; do NOT retry many
+                                     times (the NVR may lock the account)
+  Anything else: send Drishyam a photo of the screen.
+
+NVR settings in this package: IP 192.168.1.50, user admin, port 554.
+To use it at another site, open drishyam-site-relay.ps1 in Notepad and change
+the lines under "SITE CONFIG" at the top.

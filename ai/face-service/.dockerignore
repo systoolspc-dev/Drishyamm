@@ -1,0 +1,18 @@
+# Only vms_face/ and requirements.txt are copied into the image; keep the
+# build context lean anyway.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Biometric data is mounted at runtime, never baked into an image.
+vms_face/data/known_faces/
+vms_face/data/unknown_faces/
+
+.env
+.env.*
+!.env.example
+docs/
+*.md

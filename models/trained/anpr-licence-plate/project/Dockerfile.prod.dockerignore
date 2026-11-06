@@ -1,0 +1,27 @@
+# Build context for Dockerfile.prod (BuildKit reads <Dockerfile>.dockerignore
+# in place of .dockerignore). Unlike the deps-only Dockerfile, this one COPYs
+# the folder, so it must keep the models and drop every kind of data.
+
+# ── never: plate-reader data, records, exports, training runs ──────────────
+data
+data_host_backup_*
+export
+runs
+quarantine
+*.csv
+
+# ── never: secrets and env files ────────────────────────────────────────────
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/secrets
+
+# ── build files, tests, caches, scripts for the Windows host ───────────────
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+tests
+Dockerfile*
+.dockerignore
+*.ps1

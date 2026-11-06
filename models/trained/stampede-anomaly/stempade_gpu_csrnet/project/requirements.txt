@@ -1,0 +1,19 @@
+# Core
+torch>=2.2
+torchvision>=0.17
+numpy>=1.26
+opencv-python>=4.9        # Farneback optical flow, video I/O
+scipy>=1.12               # divergence / signal processing
+pyyaml>=6.0               # config
+
+# Data / eval
+scikit-learn>=1.4         # AUC, metrics
+pandas>=2.2
+matplotlib>=3.8           # visualization / debugging
+
+# Serving (Phase 4)
+# fastapi>=0.110
+# uvicorn>=0.29
+
+# Dev
+pytest>=8.0

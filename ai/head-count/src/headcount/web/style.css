@@ -1,0 +1,130 @@
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --panel-2: #1c2430;
+  --border: #2b333e;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #2ea043;
+  --accent-dim: #238636;
+  --warn: #d29922;
+  --bad: #f85149;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Top bar */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand h1 { font-size: 20px; margin: 0; font-weight: 600; }
+
+.dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--muted); box-shadow: 0 0 8px transparent;
+  transition: background .3s, box-shadow .3s;
+}
+.dot.healthy { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.dot.degraded { background: var(--warn); box-shadow: 0 0 10px var(--warn); }
+.dot.unhealthy { background: var(--bad); box-shadow: 0 0 10px var(--bad); }
+
+.metrics { display: flex; gap: 28px; flex-wrap: wrap; }
+.metric { display: flex; flex-direction: column; align-items: flex-end; }
+.metric-value { font-size: 26px; font-weight: 700; line-height: 1; }
+.metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 4px; }
+
+/* Grid of streams */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 20px;
+  padding: 24px;
+}
+
+.empty { color: var(--muted); grid-column: 1 / -1; text-align: center; padding: 60px; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-video {
+  position: relative;
+  background: #000;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-video img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.card-video .placeholder { color: var(--muted); font-size: 14px; position: absolute; }
+
+.badges {
+  position: absolute;
+  top: 12px; right: 12px;
+  display: flex; gap: 8px;
+}
+.count-badge {
+  background: rgba(0,0,0,.65);
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  padding: 6px 12px;
+  min-width: 56px;
+  display: flex; flex-direction: column; align-items: center;
+  backdrop-filter: blur(4px);
+}
+.count-badge .n { font-size: 26px; font-weight: 800; color: var(--accent); line-height: 1; }
+.count-badge .l { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+
+/* activity state colors */
+.count-badge.state-working  { border-color: var(--accent); }
+.count-badge.state-working  .n { color: var(--accent); }
+.count-badge.state-on_phone { border-color: var(--warn); }
+.count-badge.state-on_phone .n { color: var(--warn); }
+.count-badge.state-talking { border-color: #2f81f7; }
+.count-badge.state-talking .n { color: #2f81f7; }
+.count-badge.state-not_working { border-color: var(--bad); }
+.count-badge.state-not_working .n { color: var(--bad); }
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.card-title { font-weight: 600; }
+.card-sub { font-size: 12px; color: var(--muted); display: flex; gap: 12px; }
+
+.badge {
+  font-size: 11px; padding: 3px 8px; border-radius: 20px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .03em;
+}
+.badge.online { background: rgba(46,160,67,.15); color: var(--accent); }
+.badge.reconnecting { background: rgba(210,153,34,.15); color: var(--warn); }
+.badge.starting { background: rgba(139,148,158,.15); color: var(--muted); }
+.badge.stopped, .badge.error { background: rgba(248,81,73,.15); color: var(--bad); }

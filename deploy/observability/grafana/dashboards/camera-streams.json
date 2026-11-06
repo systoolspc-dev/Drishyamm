@@ -1,0 +1,223 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "title": "drisyam — per-camera streaming health",
+  "tags": ["drisyam", "streaming", "cameras"],
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "camera",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(paths{state=\"ready\"}, name)",
+        "regex": "/^(?!.*_sub$)(.*)$/",
+        "includeAll": true,
+        "multi": true,
+        "current": { "selected": false, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Cameras ready (main stream)",
+      "targets": [
+        { "expr": "sum(paths{state=\"ready\",name!~\".*_sub\"})", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red",    "value": null },
+            { "color": "orange", "value": 1 },
+            { "color": "green",  "value": 20 }
+          ]}
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Cameras not-ready",
+      "targets": [
+        { "expr": "sum(paths{state=\"notReady\",name!~\".*_sub\"})", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "orange", "value": 1 },
+            { "color": "red",    "value": 5 }
+          ]}
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Active viewers (total readers)",
+      "targets": [
+        { "expr": "sum(paths_readers{name!~\".*_sub\"})", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Total ingest (Mbps)",
+      "targets": [
+        { "expr": "sum(rate(paths_inbound_bytes{name!~\".*_sub\"}[1m])) * 8 / 1000000", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "Mbits", "decimals": 1 } }
+    },
+    {
+      "type": "stat",
+      "title": "Total egress (Mbps)",
+      "targets": [
+        { "expr": "sum(rate(paths_outbound_bytes{name!~\".*_sub\"}[1m])) * 8 / 1000000", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "Mbits", "decimals": 1 } }
+    },
+    {
+      "type": "stat",
+      "title": "Frame errors / sec (last min)",
+      "targets": [
+        { "expr": "sum(rate(paths_inbound_frames_in_error{name!~\".*_sub\"}[1m]))", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "orange", "value": 1 },
+            { "color": "red",    "value": 5 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Per-camera inbound bitrate (Mbps)",
+      "description": "How much each camera is sending into MediaMTX. Spikes = scene change (VBR) or motion. Floor near zero = source-on-demand cold.",
+      "targets": [
+        { "expr": "rate(paths_inbound_bytes{name=~\"$camera\",name!~\".*_sub\"}[1m]) * 8 / 1000000",
+          "refId": "A",
+          "legendFormat": "{{name}}" }
+      ],
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "Mbits", "min": 0 } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Per-camera egress bitrate (Mbps)",
+      "description": "How much MediaMTX is sending to viewers (WebRTC + HLS). Will be 0 when no one is watching.",
+      "targets": [
+        { "expr": "rate(paths_outbound_bytes{name=~\"$camera\",name!~\".*_sub\"}[1m]) * 8 / 1000000",
+          "refId": "A",
+          "legendFormat": "{{name}}" }
+      ],
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": { "defaults": { "unit": "Mbits", "min": 0 } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Per-camera active readers",
+      "description": "How many viewers (WebRTC + HLS) are watching each camera. Stays at 1 for ~5 min after navigation due to source-on-demand keep-alive (Phase 1.3).",
+      "targets": [
+        { "expr": "paths_readers{name=~\"$camera\",name!~\".*_sub\"}",
+          "refId": "A",
+          "legendFormat": "{{name}}" }
+      ],
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "fieldConfig": { "defaults": { "min": 0, "decimals": 0 } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Per-camera frame error rate (frames/sec)",
+      "description": "Errors decoding inbound RTP packets. > 1/s sustained = the camera is sending corrupted bytes (network, codec mismatch, GOP problem). Triage by name.",
+      "targets": [
+        { "expr": "rate(paths_inbound_frames_in_error{name=~\"$camera\",name!~\".*_sub\"}[1m])",
+          "refId": "A",
+          "legendFormat": "{{name}}" }
+      ],
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 22 },
+      "fieldConfig": {
+        "defaults": { "min": 0, "decimals": 2 },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "table",
+      "title": "Camera roster — current state",
+      "description": "Live snapshot of every camera: state, viewers, ingest/egress bitrate. Sort by State or Readers to find unhealthy / unused cameras.",
+      "targets": [
+        {
+          "expr": "paths{name!~\".*_sub\"}",
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{name}}"
+        },
+        {
+          "expr": "paths_readers{name!~\".*_sub\"}",
+          "refId": "B",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "rate(paths_inbound_bytes{name!~\".*_sub\"}[1m]) * 8 / 1000000",
+          "refId": "C",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "rate(paths_outbound_bytes{name!~\".*_sub\"}[1m]) * 8 / 1000000",
+          "refId": "D",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 31 },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time":           true,
+              "__name__":       true,
+              "job":            true,
+              "service":        true,
+              "instance":       true,
+              "readerType":     true
+            },
+            "renameByName": {
+              "name":     "Camera",
+              "state":    "State",
+              "Value #A": "Up",
+              "Value #B": "Readers",
+              "Value #C": "Ingest Mbps",
+              "Value #D": "Egress Mbps"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 1
+}

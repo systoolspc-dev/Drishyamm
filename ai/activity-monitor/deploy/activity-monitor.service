@@ -1,0 +1,34 @@
+# systemd unit for running the activity-monitor service on an edge device.
+#
+# Install (Jetson/Pi):
+#   1. Put the project at /opt/activity-monitor and create a venv:
+#        python3 -m venv /opt/activity-monitor/venv
+#        # On Jetson: install the NVIDIA torch wheel FIRST, then:
+#        /opt/activity-monitor/venv/bin/pip install -e /opt/activity-monitor
+#   2. sudo cp deploy/activity-monitor.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload && sudo systemctl enable --now activity-monitor
+#   4. Logs:  journalctl -u activity-monitor -f
+#
+# Adjust User=, WorkingDirectory=, and paths to match your install.
+
+[Unit]
+Description=Activity monitor (per-person posture/phone analysis + REST API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=monitor
+WorkingDirectory=/opt/activity-monitor
+ExecStart=/opt/activity-monitor/venv/bin/activity-monitor --config config/config.yaml
+EnvironmentFile=-/opt/activity-monitor/.env
+Environment=MONITOR_ACTIVITY__DEVICE=cuda
+Restart=always
+RestartSec=5
+TimeoutStartSec=180
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

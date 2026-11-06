@@ -1,0 +1,13 @@
+names:
+- people
+nc: 1
+path: C:\Users\systo\Downloads\crowd training\crowd training
+roboflow:
+  license: CC BY 4.0
+  project: crowd-counting-dataset-w3o7w-bdoyn
+  url: https://universe.roboflow.com/vidit-ghai/crowd-counting-dataset-w3o7w-bdoyn/dataset/1
+  version: 1
+  workspace: vidit-ghai
+test: test/images
+train: train/images
+val: valid/images

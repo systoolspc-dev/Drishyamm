@@ -1,0 +1,6 @@
+path: C:/projects/No Helmet.v1i.yolov11
+train: C:/projects/No Helmet.v1i.yolov11/splits/train.txt
+val: C:/projects/No Helmet.v1i.yolov11/splits/val.txt
+nc: 1
+names:
+- No Helmet

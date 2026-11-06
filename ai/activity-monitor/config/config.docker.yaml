@@ -1,0 +1,61 @@
+# activity-monitor config for the Drishyam stack (CPU).
+# Monitors a workstation camera via MediaMTX and names people from vms_face.
+# Keep the camera set SMALL (NVR rule: no fan-out pulls) — add streams deliberately.
+
+detectors:
+  - id: phones
+    label: phones
+    weights: models/phone.pt
+    device: cpu
+    conf: 0.50
+    imgsz: 640          # CPU: 640 keeps inference ~real-time; raise for distant phones on GPU
+
+activity:
+  enabled: true
+  pose_weights: models/yolov8s-pose.pt
+  phone_detector_id: phones
+  device: cpu
+  conf: 0.40
+  imgsz: 640
+  phone_require_hand: true
+  phone_hand_radius: 1.3
+  hold_seconds: 1.5
+  talking_enabled: false
+  ledger_enabled: true
+  store_path: /srv/activity-monitor/data/activity.db
+  ledger_flush_sec: 30
+  session_gap_sec: 3.0
+
+identity:
+  enabled: true
+  redis_url: "redis://redis:6379/0"     # the stack's Redis (vms_face publishes cam-state here)
+  channel_prefix: "vms.cam.state"
+  ttl_sec: 3.0
+
+pipeline:
+  smooth_window: 5
+  infer_every: 2          # every 2nd frame — CPU headroom
+  target_fps: 0
+  reconnect_delay: 3.0
+  max_reconnect_delay: 30.0
+  read_timeout: 20.0
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  preview: true
+  jpeg_quality: 60
+
+log_level: INFO
+
+# Attendance + alerts are built from vms_face's persisted recognition
+# (detection_events, polled by recognition_sync) — those need NO stream here.
+#
+# The pose-based ACTIVITY features (phone-usage, seated/working, per-person time
+# ledger) DO need live frames — but which cameras run them is a PRODUCT decision
+# the operator makes in the UI, not a hardcode. Those cameras are added/removed at
+# runtime via POST /activity/cameras (persisted in the ledger DB, restored on
+# boot). Each is pulled from MediaMTX (`cam_<monitorId>`) — the same path vms_face
+# already reads — so MediaMTX fans the running stream out to us: zero extra NVR
+# load. So this static list stays EMPTY; the dynamic set is the source of truth.
+streams: []

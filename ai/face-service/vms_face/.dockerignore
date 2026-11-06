@@ -1,0 +1,28 @@
+# Keep the build context lean. The Dockerfile only needs source + requirements;
+# everything else here is local-dev junk that bloats the layer cache key.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+**/.env
+**/.env.*
+!**/.env.example
+
+# Models can be tens of GB; mount them at runtime instead of baking in.
+**/models/
+**/known_faces/
+**/eval_data/
+
+# Local artifacts
+**/*.log
+**/*.sqlite
+**/.DS_Store
+
+# CI / IDE
+.github/
+.idea/
+.vscode/

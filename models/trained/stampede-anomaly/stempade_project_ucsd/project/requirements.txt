@@ -1,0 +1,24 @@
+# CPU / native Windows
+#   pip install -r requirements.txt
+#
+# GPU: TensorFlow dropped native-Windows CUDA after 2.10, so a GPU run means
+# WSL2 or Linux, and the CUDA libraries come from the extra:
+#   pip install "tensorflow[and-cuda]>=2.20"
+#
+# The >=2.20 floor is not cosmetic.  On Blackwell (compute capability 12.0)
+# TF 2.19 and earlier ship CUDA 12.5 kernels with no sm_120 binaries and no
+# usable PTX: TensorFlow reports a healthy GPU, then every kernel launch fails
+# with CUDA_ERROR_INVALID_PTX.  Verified on this project's hardware.  Run
+# `python src/train.py --require-gpu` to have that caught at startup instead of
+# mid-epoch.
+#
+# If TF reports "Cannot dlopen some GPU libraries" despite the wheels being
+# installed, put every nvidia/*/lib directory on LD_LIBRARY_PATH -- pip's CUDA
+# packages are not all found by TF's loader on their own.
+
+numpy>=1.24
+opencv-python>=4.8        # use opencv-python-headless on a machine with no libGL
+tensorflow>=2.16          # >=2.20 required for a GPU run on Blackwell / sm_120
+scikit-learn>=1.3
+matplotlib>=3.7
+tqdm>=4.65

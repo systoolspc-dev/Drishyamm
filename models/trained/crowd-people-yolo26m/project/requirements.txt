@@ -1,0 +1,24 @@
+# YOLO26 Training Environment Requirements
+# Install with: pip install -r requirements.txt
+
+
+
+# Core computer vision framework (YOLO26 is built on Ultralytics)
+ultralytics>=8.3.0
+
+# YAML parser for portable dataset configurations
+pyyaml>=6.0
+
+# Core Machine Learning Framework (CUDA-compiled version will be fetched via index)
+torch>=2.7.0
+torchvision>=0.18.0
+
+# ---------------------------------------------------------
+# GPU ACCELERATION NOTE (NVIDIA Blackwell RTX Pro 5000)
+# ---------------------------------------------------------
+# The --extra-index-url above automatically grabs the 
+# Blackwell-compatible PyTorch 2.7+ (CUDA 13.0) wheels.
+# Just run: pip install -r requirements.txt
+# ---------------------------------------------------------
+
+

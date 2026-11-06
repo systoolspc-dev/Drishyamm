@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "updated": "2026-09-02",
+  "note": "What the live ANPR worker actually runs, documented honestly. Read by model_registry.describe_models(); the 'version' tags travel with every sighting (meta.models.registry). Facts below were read from the checkpoints / hub configs on 2026-09-02 — update this file when a model is replaced.",
+  "models": {
+    "yolov8n.pt": {
+      "role": "vehicle_detector",
+      "file": "models/yolov8n.pt",
+      "source": "Ultralytics stock YOLOv8n COCO checkpoint (ultralytics 8.0.0.dev0, saved 2022-12-30); not trained by us",
+      "architecture": "YOLOv8n, 640 px letterbox input, 80-class head",
+      "training_data": "COCO 2017 (80 classes, 500 epochs, batch 16). No Indian road imagery.",
+      "license": "AGPL-3.0 (Ultralytics)",
+      "input": "BGR frame letterboxed to 640 px; FP16 on CUDA when ANPR_HALF=1; at night a gamma+CLAHE corrected copy (ANPR_NIGHT_DET_ENHANCE)",
+      "output": "COCO boxes; the worker keeps car(2) / motorcycle(3) / bus(5) / truck(7) (vehicle_types.trackable_ids) and hands them to bytetrack_lite",
+      "known_issues": [
+        "No auto-rickshaw / e-rickshaw / tractor class: those come back as car, bus or truck, so the console shows the honest 'vehicle' (vehicle_types.shown) and keeps the raw guess in meta.vehicle_type_raw.",
+        "Distant two-wheelers score 0.2-0.4 on COCO — hence the per-class floor ANPR_MOTO_CONF instead of one threshold.",
+        "Flickers between car / truck / motorcycle frame to frame — hence the area-weighted, capped class vote per track."
+      ],
+      "version": "coco-8.0.0"
+    },
+    "best.pt": {
+      "role": "plate_detector",
+      "file": "models/best.pt",
+      "source": "Fine-tuned from yolov8n.pt with ultralytics 8.4.84 on 2026-07-02 (train_args.data = License-Plate-Recognition-4/data.yaml): Roboflow Universe 'License Plate Recognition' dataset, export v4",
+      "architecture": "YOLOv8n, 640 px input, 1 class (License_Plate)",
+      "training_data": "Roboflow 'License Plate Recognition' v4, ~24k images, CC BY 4.0; mixed-country web imagery. 25 epochs, batch 64, best epoch 21; val on its own split: mAP50 0.981, mAP50-95 0.686. NOT fine-tuned on Indian / Gujarat feeds.",
+      "license": "weights AGPL-3.0 (Ultralytics training code); dataset CC BY 4.0 (Roboflow Universe)",
+      "input": "full frame at 640 px letterbox PLUS a native-resolution pass on small vehicle crops (ANPR_NATIVE_RES_DET), duplicates merged at IoU > 0.45",
+      "output": "plate boxes with confidence; ANPR_PLATE_CONF 0.30 floor, mean per-track confidence must reach ANPR_MIN_DET_CONF to post",
+      "known_issues": [
+        "Detects OSD captions, Gujarati shop signs, dealer badges and grilles as plates (seen live: a Tata grille read as GJ18ZT1580) — the worker filters by aspect, OSD band, decal colour, burn-in zones and mean detector confidence.",
+        "Never saw Indian two-row bike plates or Gujarat fonts in training; distant plates are under-detected, which the native-resolution pass partly recovers.",
+        "Box padding is the worker's, not the model's: crops carry a strip of car body that the decal filter must ignore."
+      ],
+      "version": "roboflow-lpr-v4-e25"
+    },
+    "cct-s-v2-global-model": {
+      "role": "ocr_primary",
+      "file": "~/.cache/fast-plate-ocr/cct-s-v2-global-model/cct_s_v2_global.onnx",
+      "source": "fast-plate-ocr hub (ankandrew/fast-plate-ocr, pip fast-plate-ocr 1.1.0), 'global' v2 release; downloaded on first use, not trained by us",
+      "architecture": "CCT (Compact Convolutional Transformer), 10 output slots x 37-way softmax (0-9, A-Z, '_' pad); the worker reads the whole per-slot distribution (plate_ocr.constrained_decode)",
+      "training_data": "Multi-country Latin-alphabet plates; the shipped plate_config lists 64 plate_regions (Europe, Americas, SE Asia, 'Unknown') — India is NOT among them",
+      "license": "MIT (fast-plate-ocr repository; weights distributed through its hub)",
+      "input": "64 x 128 RGB, aspect ratio not kept, linear resize; the worker feeds every enhancement variant of a crop in one batch",
+      "output": "greedy text (kept as raw_text), per-character probabilities, plus the format-constrained decode the rules vote with",
+      "known_issues": [
+        "10 slots: physically cannot emit an 11-character plate (3-letter series, e.g. MH12ABC1234).",
+        "Drops one character on ~7 px/char crops far more often than Gujarat issues 9-char plates — the 9-vs-10 length ambiguity the superstring rule (ANPR_LEN_SWITCH) corrects (audit 2026-09-02: 6 of 6 wrong 9-char reads).",
+        "Global training, not Indian fonts: look-alike confusions 0/O/Q/D, 1/I/L, 2/Z, 5/S, 8/B, 6/G/C/E, 4/A, 7/T are the dominant error class."
+      ],
+      "version": "v2-global"
+    },
+    "cct-xs-v2-global-model": {
+      "role": "ocr_second_reader",
+      "file": "~/.cache/fast-plate-ocr/cct-xs-v2-global-model/cct_xs_v2_global.onnx",
+      "source": "fast-plate-ocr hub, 'global' v2 release, extra-small variant; the ensemble's second reader (ANPR_OCR_READERS), weight 0.9",
+      "architecture": "CCT extra-small, 10 output slots x 37-way softmax",
+      "training_data": "Same corpus and plate_regions as cct-s-v2-global-model (India not listed)",
+      "license": "MIT (fast-plate-ocr repository)",
+      "input": "64 x 128 RGB, aspect ratio not kept",
+      "output": "reads tagged '<variant>@r1'; per-frame agreement with the primary reader is meta.readers_agree and gates short-plate confirmation (ANPR_SHORT_CONFIRM_READERS_AGREE)",
+      "known_issues": [
+        "Same 10-slot ceiling and look-alike confusions as the primary; less accurate on its own, valuable only as an independent second opinion."
+      ],
+      "version": "v2-global"
+    },
+    "calibrator.json": {
+      "role": "confidence_calibrator",
+      "file": "models/calibrator.json",
+      "source": "train_calibrator.py — logistic regression over calibrator.FEATURES fitted on officer labels (Correct / Wrong / Not a plate)",
+      "architecture": "logistic regression, standardised inputs, L2; pure numpy at inference (calibrator.py)",
+      "training_data": "officer labels from the console review queue plus auto-labels, re-fitted by the trainer cycle (first fit landed 2026-09-02 11:21 UTC: 347 labels, 134 human / 213 auto, cv_auc 0.778 judged on the human labels vs 0.658 for the heuristic)",
+      "license": "project-internal",
+      "input": "meta.features of a read",
+      "output": "P(read is correct); replaces the heuristic agreement x sqrt(OCR conf) x evidence formula when the file exists",
+      "known_issues": [
+        "Absent until the trainer's first fit — the worker then falls back to the heuristic confidence. A file whose feature list differs from calibrator.FEATURES is ignored.",
+        "Re-fitted on every trainer cycle, so the version tag never changes: the sha256 fingerprint in meta.models.calibrator is what identifies a given fit."
+      ],
+      "version": "logistic-v1"
+    },
+    "ocr_base": {
+      "role": "ocr_fine_tune_base (not used at inference)",
+      "file": "models/ocr_base/cct_s_v2_global.keras",
+      "source": "Keras export of cct-s-v2-global-model, the starting point train_ocr.py fine-tunes from",
+      "architecture": "CCT small, same config as the hub ONNX",
+      "training_data": "see cct-s-v2-global-model",
+      "license": "MIT (fast-plate-ocr)",
+      "input": "n/a at inference",
+      "output": "n/a at inference; a fine-tune lands as models/ocr/model.onnx + plate_config.yaml and is hot-reloaded by Models.watch",
+      "known_issues": [],
+      "version": "v2-global-keras"
+    }
+  }
+}

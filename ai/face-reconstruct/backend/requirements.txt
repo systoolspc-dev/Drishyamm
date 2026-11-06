@@ -1,0 +1,30 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+# NumPy MUST stay on 1.x. PyTorch 2.2.2 (pinned for the
+# torchvision.transforms.functional_tensor compatibility — see Dockerfile)
+# was built against the NumPy 1.x C ABI. NumPy 2.x breaks the bridge with
+# "RuntimeError: Numpy is not available", which the pipeline silently
+# swallows and returns stage-3 CV output instead of the GAN result.
+numpy>=1.23.0,<2.0
+# Pin opencv-python to a build that still supports numpy<2. 4.10.x is the
+# last family before opencv-python tightened to numpy>=2 in 4.11+.
+opencv-python>=4.8.0,<4.11
+# torch/torchvision are pre-installed in the Dockerfile with explicit
+# pinned versions matching the CUDA base. We deliberately do NOT list
+# them here — pip would re-resolve and try to download the CPU-only
+# wheels from PyPI, which (a) wastes ~2 GB of bandwidth, (b) wrecks
+# the CUDA-pinned setup, and (c) was the source of the build's
+# IncompleteRead failure on the first attempt.
+addict
+future
+lmdb
+Pillow
+pyyaml
+requests
+scikit-image
+scipy
+tqdm
+yapf
+lpips
+gdown

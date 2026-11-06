@@ -1,0 +1,33 @@
+# Head-count pipeline configuration (heads only).
+# Override any value with env vars: HEADCOUNT_API__PORT=9000, etc.
+
+detectors:
+  - id: heads
+    label: heads
+    weights: models/abel/best.pt
+    hf_repo: AbelKidane/yolov8headdetector   # auto-downloaded if missing
+    hf_file: best.pt
+    color: [0, 255, 0]
+    device: auto            # auto | cpu | cuda | mps
+    half: false
+    conf: 0.35
+    imgsz: 640
+
+pipeline:
+  smooth_window: 5
+  infer_every: 1
+  target_fps: 0
+  reconnect_delay: 3.0
+  max_reconnect_delay: 30.0
+  read_timeout: 10.0
+
+api:
+  host: 0.0.0.0
+  port: 8000
+
+log_level: INFO
+
+streams:
+  - id: cam1
+    name: "Camera"
+    source: 0             # webcam index, file path, or rtsp://... URL

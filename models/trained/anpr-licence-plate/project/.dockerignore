@@ -1,0 +1,15 @@
+# Nothing from this folder is COPY'd into the image (it is bind-mounted at
+# runtime); keep the build context tiny anyway.
+data/
+models/
+__pycache__/
+*.pyc
+# (Dockerfile.prod has its own Dockerfile.prod.dockerignore, which keeps models/)
+data_host_backup_*/
+export/
+runs/
+quarantine/
+weights/
+*.csv
+**/.env
+**/.env.*

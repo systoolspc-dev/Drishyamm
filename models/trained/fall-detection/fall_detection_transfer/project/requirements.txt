@@ -1,0 +1,10 @@
+# Single DL framework: PyTorch (YOLO-pose is torch-based, so the fall
+# classifier is torch too — no TensorFlow needed).
+# ultralytics pulls in torch, torchvision, opencv-python, numpy, scipy.
+ultralytics>=8.1.0
+torch>=2.1
+lap>=0.5.12         # required by ultralytics ByteTrack tracker
+scikit-learn>=1.2
+tqdm>=4.65
+onnx>=1.15          # for exporting the classifier to the GPU server (TensorRT/ONNX)
+onnxruntime>=1.16

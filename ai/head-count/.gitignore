@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+
+# Virtualenvs
+venv/
+.venv/
+
+# Models (large; auto-downloaded / mounted at deploy)
+
+# Local & OS
+.env
+.DS_Store
+*.log

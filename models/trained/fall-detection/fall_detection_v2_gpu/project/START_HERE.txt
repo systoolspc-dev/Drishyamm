@@ -1,0 +1,73 @@
+====================================================================
+ FALL DETECTION — START HERE  (GPU PC handoff)
+====================================================================
+
+WHAT THIS IS
+  A CCTV fall-detection system. It already works. We are making it
+  smarter so it STOPS false-alarming when people squat / bend over /
+  kneel / sit down. We do that by training it on more examples
+  (the "OmniFall" data) — no hand-written rules.
+
+  The current model:  models/fall_cnn.pt   (falls sens 0.920 / spec 0.826)
+  Goal: fewer false alarms on crouching, without missing real falls.
+
+--------------------------------------------------------------------
+ IF YOU ARE CLAUDE ON THIS PC
+--------------------------------------------------------------------
+  Read CLAUDE.md first, then docs/OMNIFALL.md, and run the pipeline
+  for the user. Everything you need is in this folder. The OmniFall
+  label files are already bundled in omnifall_annotations/ (no network
+  needed for them — only the videos are downloaded manually).
+
+--------------------------------------------------------------------
+ IF YOU ARE THE USER — 4 STEPS
+--------------------------------------------------------------------
+
+STEP 1 — Set up (one time)
+  Windows:
+    python -m venv venv
+    venv\Scripts\pip install -r requirements.txt
+    venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu121
+    venv\Scripts\python -c "import torch; print('cuda:', torch.cuda.is_available())"
+  Linux/Mac: same, but use  ./venv/bin/pip  and  ./venv/bin/python
+  (If cuda prints False, see TROUBLESHOOTING in CLAUDE.md — it still
+   runs on CPU, just slower.)
+
+STEP 2 — Download the videos (the only manual part)
+  Put these two into ONE folder (call it VIDS):
+    * le2i  -> https://search-data.ubfc.fr/   (search "Le2i fall detection")
+    * mcfd  -> https://www.iro.umontreal.ca/~labimage/Dataset/
+  These teach the model that squat/bend/sit/kneel are NOT falls.
+  (Optional extras + gated ones are listed in docs/OMNIFALL.md.)
+
+STEP 3 — Run ONE command (does everything: prep -> train -> eval)
+  Windows:
+    venv\Scripts\python -m src.run_pipeline --omnifall-videos VIDS --configs le2i,mcfd --holdout s2
+  Linux/Mac:
+    ./venv/bin/python  -m src.run_pipeline --omnifall-videos VIDS --configs le2i,mcfd --holdout s2
+
+  This automatically extracts features, trains, and saves the new model
+  to  models/fall_cnn_omnifall.pt.
+    - add   --gmdcsa <root> --videodataset <root>   if those datasets
+      are also on this PC (else they're skipped — that's fine).
+    - add   --fetch-oops   to auto-download real-world OOPS clips and
+      print an honest "in the wild" before/after score.
+    - add   --dry-run      to preview the steps without running them.
+
+STEP 4 — If the new model is better, make it the live one
+  Compare the scores it prints. If falls are still caught (~0.92) and
+  false alarms dropped, promote it:
+    Windows:    copy models\fall_cnn_omnifall.pt models\fall_cnn.pt
+    Linux/Mac:  cp   models/fall_cnn_omnifall.pt models/fall_cnn.pt
+
+  For the FINAL deployment model, retrain without --holdout so it uses
+  every subject.
+
+--------------------------------------------------------------------
+ HELP
+--------------------------------------------------------------------
+  Full runbook ......... docs/OMNIFALL.md
+  Project overview ..... CLAUDE.md
+  GPU/training issues .. CLAUDE.md  (TROUBLESHOOTING section)
+  Quick wiring check ... venv\Scripts\python -m tests.smoke_test
+====================================================================

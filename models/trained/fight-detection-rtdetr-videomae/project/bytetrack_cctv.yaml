@@ -1,0 +1,20 @@
+tracker_type: bytetrack
+
+# Detection ko "confirm" karne ke liye kitna confidence chahiye (0.5 = 50%)
+track_high_thresh: 0.5
+
+# Dhundle (blurry) ya crowd me chupe logo ko track karne ke liye minimum limit
+track_low_thresh: 0.1
+
+# Naya tracker ID assign karne ke liye kitna confidence chahiye
+new_track_thresh: 0.6
+
+# Agar koi person frame se bahar jaye ya kisi ke piche chup jaye (occlusion), 
+# toh kitne frames (frames = 60) tak uska ID yaad rakhna hai
+track_buffer: 60
+
+# Purane bounding box aur naye bounding box me kitna overlap (IoU) hona chahiye match karne ke liye
+match_thresh: 0.85
+
+# Detection score ko tracking box score ke sath combine karna (smoothness ke liye)
+fuse_score: True

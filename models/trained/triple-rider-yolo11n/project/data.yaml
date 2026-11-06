@@ -1,0 +1,14 @@
+path: .
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 2
+names: ['Single-Double-Rider', 'Triple Rider']
+
+roboflow:
+  workspace: chirags-workspace-vwgbn
+  project: triple-rider-detection-el6cv
+  version: 1
+  license: Private
+  url: https://app.roboflow.com/chirags-workspace-vwgbn/triple-rider-detection-el6cv/1

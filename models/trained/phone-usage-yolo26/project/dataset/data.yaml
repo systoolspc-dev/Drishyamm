@@ -1,0 +1,7 @@
+path: C:/projects/phone-no_phn/phone-no_phn/dataset
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: using phone

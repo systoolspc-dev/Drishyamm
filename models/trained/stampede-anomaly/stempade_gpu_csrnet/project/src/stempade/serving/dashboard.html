@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>stempade — live risk</title>
+<style>
+  body { margin:0; font-family:system-ui,sans-serif; background:#0f1115; color:#e6e8eb; }
+  header { padding:16px 24px; font-size:20px; font-weight:600; border-bottom:1px solid #262a33; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; padding:24px; }
+  .cam { background:#1a1d24; border-radius:12px; padding:16px; border:1px solid #262a33; }
+  .name { font-weight:600; margin-bottom:8px; }
+  .level { font-size:26px; font-weight:800; letter-spacing:.5px; }
+  .score { color:#9aa2ad; font-size:13px; margin-top:4px; }
+  .subs { margin-top:10px; font-size:12px; color:#9aa2ad; }
+  .NORMAL{color:#3ecf8e}.MODERATE{color:#e8c341}.HIGH{color:#f0883e}.CRITICAL{color:#f0506e}
+  .STARTING{color:#9aa2ad}
+</style>
+</head>
+<body>
+<header>stempade — live crowd-risk monitor</header>
+<div id="grid"></div>
+<script>
+async function refresh() {
+  try {
+    const r = await fetch('/api/status');
+    const data = await r.json();
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    for (const c of data.cameras) {
+      const subs = c.sub_scores ? Object.entries(c.sub_scores)
+        .map(([k,v]) => `${k}:${v}`).join('  ') : '';
+      const ppl = (c.people_per_m2 != null) ? ` · ${c.people_per_m2.toFixed(1)} ppl/m²` : '';
+      grid.innerHTML += `
+        <div class="cam">
+          <div class="name">${c.camera}</div>
+          <div class="level ${c.level}">${c.level}</div>
+          <div class="score">score ${(c.score ?? 0).toFixed(2)}${ppl}</div>
+          <div class="subs">${subs}</div>
+        </div>`;
+    }
+  } catch (e) { /* transient */ }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

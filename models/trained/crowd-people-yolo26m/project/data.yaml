@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['people']
+
+roboflow:
+  workspace: vidit-ghai
+  project: crowd-counting-dataset-w3o7w-bdoyn
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/vidit-ghai/crowd-counting-dataset-w3o7w-bdoyn/dataset/1

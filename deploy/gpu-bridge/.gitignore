@@ -1,0 +1,3 @@
+# WireGuard keys live in *.env files: never commit them.
+*.env
+*.key

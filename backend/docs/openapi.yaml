@@ -1,0 +1,230 @@
+openapi: 3.0.3
+info:
+  title: DrishyamVMS Backend API
+  version: "1.0.0"
+  description: >
+    Operator/admin REST API for DrishyamVMS. This is a CURATED spec covering the
+    core resource groups (auth, camera groups, streaming, AI events, health).
+    It is a living contract — extend it as endpoints stabilize; ~131 routes exist
+    in total. Served raw at `GET /api/openapi.yaml`.
+servers:
+  - url: /api
+    description: Same-origin (behind nginx)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string }
+    TokenPair:
+      type: object
+      properties:
+        accessToken:  { type: string }
+        refreshToken: { type: string }
+    CameraGroup:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        host: { type: string }
+        deviceType: { type: string, example: hikvision }
+        totalChannels: { type: integer }
+        status: { type: string, enum: [online, offline, unknown] }
+    AIEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        eventType: { type: string, example: tripwire.entry }
+        severity: { type: string, enum: [info, warning, critical] }
+        ts: { type: string, format: date-time }
+        cameraId: { type: string, format: uuid }
+        acknowledgedAt: { type: string, format: date-time, nullable: true }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                name: { type: string }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        "400": { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Log in, returns an access + refresh token pair
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        "401": { description: Invalid credentials }
+
+  /auth/refresh-token:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Exchange a refresh token for a new access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        "401": { description: Invalid/expired refresh token }
+
+  /groups:
+    get:
+      tags: [Camera Groups]
+      summary: List the caller's camera groups
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CameraGroup' }
+    post:
+      tags: [Camera Groups]
+      summary: Create a camera group (registers all channels; atomic)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, host]
+              properties:
+                name: { type: string, maxLength: 100 }
+                host: { type: string }
+                port: { type: integer, default: 554 }
+                httpPort: { type: integer, default: 80 }
+                username: { type: string }
+                password: { type: string }
+                totalChannels: { type: integer, default: 1, maximum: 256 }
+                deviceType: { type: string, default: hikvision }
+                location: { type: string, nullable: true }
+      responses:
+        "201": { description: Created }
+        "400": { description: Validation error }
+        "403": { description: Camera plan limit reached }
+        "409": { description: A device at this host already exists }
+
+  /groups/{groupId}:
+    delete:
+      tags: [Camera Groups]
+      summary: Delete a group and all its cameras (tears down streams + transcoders)
+      parameters:
+        - { name: groupId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Deleted }
+        "404": { description: Not found }
+
+  /groups/{groupId}/cameras/retention:
+    post:
+      tags: [Camera Groups]
+      summary: Bulk-set recording retention for selected cameras
+      parameters:
+        - { name: groupId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [monitorIds]
+              properties:
+                monitorIds: { type: array, items: { type: string } }
+                retentionDays: { type: integer, nullable: true, description: "null = inherit" }
+      responses:
+        "200": { description: Applied }
+
+  /stream/start/{monitorId}:
+    get:
+      tags: [Streaming]
+      summary: Ensure a camera's paths + warm HLS; returns playback URLs
+      parameters:
+        - { name: monitorId, in: path, required: true, schema: { type: string } }
+        - { name: quality, in: query, required: false, schema: { type: string, enum: [auto, high, low] } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webrtcUrl: { type: string, nullable: true }
+                  hlsUrl: { type: string }
+                  hlsSubUrl: { type: string, nullable: true }
+                  masterUrl: { type: string, nullable: true }
+
+  /ai/events:
+    get:
+      tags: [AI]
+      summary: List AI detection events for the caller (paginated, time-ordered)
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: severity, in: query, schema: { type: string, enum: [info, warning, critical] } }
+        - { name: eventType, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AIEvent' }
+
+  /health/live:
+    get:
+      tags: [Health]
+      security: []
+      summary: Liveness probe (LB/orchestration)
+      responses:
+        "200": { description: alive }
+
+  /openapi.yaml:
+    get:
+      tags: [Meta]
+      security: []
+      summary: This spec (raw YAML)
+      responses:
+        "200": { description: OpenAPI document }

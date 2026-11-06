@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+data/UTKFace/
+data/*.tar.gz
+data/*.zip
+.DS_Store

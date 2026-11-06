@@ -1,0 +1,62 @@
+# --- Core async stack ---
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.6.0
+python-multipart==0.0.12
+websockets==13.1
+
+# --- Database (Postgres) ---
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.13.3
+psycopg2-binary==2.9.10
+
+# --- Vector DB (Qdrant) ---
+qdrant-client==1.12.0
+
+# --- Message bus + cache ---
+redis==5.1.1
+
+# --- Object storage ---
+minio==7.2.10
+
+# --- Vision / ML ---
+# For Blackwell (compute capability 10.0): use onnxruntime-gpu >=1.20 with CUDA 12.6+
+# Install separately: pip install onnxruntime-gpu --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+onnxruntime-gpu==1.20.0
+insightface==0.7.3
+opencv-python==4.10.0.84
+numpy==1.26.4
+scipy==1.14.1               # Hungarian assignment for the SORT-style tracker
+scikit-image==0.24.0
+Pillow==11.0.0
+pillow-heif==1.4.0          # HEIC/HEIF (iPhone photos) decode for uploads
+
+# --- Stream ingest (RTSP) ---
+av==13.1.0  # PyAV — FFmpeg bindings, faster than cv2 for RTSP
+
+# --- Observability ---
+structlog==24.4.0
+prometheus-client==0.21.0
+psutil==6.1.0
+# pynvml is optional — only needed for GPU metrics on NVIDIA hosts.
+# Pin separately on Linux/Windows GPU machines:
+#   pip install nvidia-ml-py==12.560.30
+nvidia-ml-py==12.560.30; platform_system != "Darwin"
+
+# --- OpenTelemetry (lazy-loaded; no-op when VMS_OTEL_ENABLED=false) ---
+opentelemetry-api==1.27.0
+opentelemetry-sdk==1.27.0
+opentelemetry-exporter-otlp-proto-grpc==1.27.0
+opentelemetry-instrumentation-fastapi==0.48b0
+opentelemetry-instrumentation-sqlalchemy==0.48b0
+opentelemetry-instrumentation-redis==0.48b0
+
+# --- Utilities ---
+httpx==0.27.2
+tenacity==9.0.0
+python-dotenv==1.0.1
+typer==0.12.5
+PyJWT==2.9.0
+cryptography==43.0.3   # used by JWT (when alg upgrades) and rtsp_url encryption

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Head Count · Live Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="health-dot"></span>
+      <h1>Head Count</h1>
+    </div>
+    <div class="metrics">
+      <div class="metrics" id="totals"></div>
+      <div class="metric">
+        <span class="metric-value" id="streams-online">—</span>
+        <span class="metric-label">streams online</span>
+      </div>
+      <div class="metric">
+        <span class="metric-value" id="device">—</span>
+        <span class="metric-label">device</span>
+      </div>
+      <div class="metric">
+        <span class="metric-value" id="uptime">—</span>
+        <span class="metric-label">uptime</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="grid" class="grid">
+    <p id="empty" class="empty">Connecting to pipeline…</p>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

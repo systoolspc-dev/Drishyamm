@@ -1,0 +1,101 @@
+This project reimplements a published crowd-stampede detection paper
+(Scientific Reports 2026, 16:16155), using the UCSD Anomaly Detection Dataset
+as its ONLY data source. Read pipeline.md and TRAINING.md first — they document
+the paper's spec, the places where that spec is wrong, and every decision the
+implementation had to make. Do not re-derive any of it.
+
+Your job: run the training end to end on this GPU box and report the numbers.
+
+STEP 0 — environment
+  pip install -r requirements.txt
+  Confirm TensorFlow actually sees the GPU:
+    python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+  If that prints an empty list on native Windows, that is expected: TensorFlow
+  dropped native Windows CUDA support after 2.10. Either run under WSL2, or
+  pin tensorflow==2.10 and numpy<1.24. Tell me which you did before continuing.
+
+STEP 1 — preprocess
+  python src/preprocess.py --workers <cores>
+
+  One command. There is no dataset ordering constraint any more — UCSD is the
+  only source, and it calibrates the quantization ranges from itself.
+  98 clips, 18,560 frames, 18,462 flow frames, ~3.5 GB of cache.
+
+  --workers runs one clip per process. Measured on this box (24 cores,
+  --workers 12): the whole corpus preprocesses in about 20 seconds. The paper
+  describes this stage as its bottleneck because it ran Farneback on three
+  colour channels of video; UCSD is grayscale .tif, so the flow stage takes the
+  exact single-channel reduction and the cost largely disappears. Everything
+  else defaults correctly.
+
+  Already run on this box — cache/ is populated and portable. Re-run it only if
+  you change FLOW_CLIP or anything in the label derivation.
+
+  Before moving on, check and report:
+    - the corpus class balance. Measured here: normal 23.1%, moderate 23.1%,
+      dense 23.1%, risky 30.7% of 18,462 frames. If risky is far from 30.7%
+      the .m annotation parse is wrong; stop and tell me.
+    - the calibrated ranges in cache/scalar_ranges.json. Measured here:
+        acceleration 0.065-0.232   divergence 0.089-0.292
+        scene_change 0.001-0.029   entropy    1.08-2.80
+      Motion entropy is the one to watch: it must span roughly 1.1-2.8, NOT ~0.
+      If entropy is near zero the flow normalisation is wrong and training is
+      pointless; stop and tell me.
+
+STEP 2 — train
+  python src/train.py
+
+  Report the train/val clip split, the strata line, and the per-split class
+  counts it prints before the first epoch. Measured here with the defaults:
+  77 train / 21 val clips, 3,346 train / 907 val windows, val class balance
+  23.3 / 21.3 / 20.4 / 35.1 percent. If any class shows 0 windows in the val
+  split, stop and tell me — early stopping monitors val accuracy, so a missing
+  class changes what is being optimised.
+
+  If you hit OOM: the first conv activation is ~411 MB per sample, so batch 8
+  is the memory driver, not the 26.5M parameters. In order of preference —
+  enable mixed precision, then lower --batch-size. Say which you changed.
+  Do NOT change anything marked [paper] in src/config.py (seq length 16,
+  overlap 12, Adam @ 1e-3, 40 epochs, patience 10). Changing those stops this
+  being a reproduction.
+
+  The Keras generator accepts workers/use_multiprocessing/max_queue_size via
+  its constructor if the GPU is starved waiting on disk.
+
+STEP 3 — evaluate
+  python src/evaluate.py --run <run_name>
+  python src/evaluate.py --run <run_name> --anomaly
+  python src/evaluate.py --run <run_name> --latency
+
+REPORT BACK
+  - best epoch, train/val accuracy and loss
+  - the confusion matrix, and specifically whether any normal<->risky
+    confusions occurred (the paper claims zero)
+  - per-class precision/recall/F1 and the one-vs-rest AUCs
+  - the --anomaly AUC, the Youden's J threshold, and abnormal/normal recall
+    (the paper's comparable figure is a threshold of 0.5512)
+  - measured latency vs the paper's 0.173 s per 16-frame window / 12.77 FPS
+
+Do not expect the paper's 99.75%. Its labels were hand-made and never
+published; ours are derived from UCSD by a documented rule. TRAINING.md
+"What to expect" explains why the two are not comparable. Report what you
+actually measure.
+
+Two things to settle before you kick it off:
+
+WINDOW_LABEL in src/config.py — currently "max". That labels a 16-frame window
+with the highest-risk class in it, which is what a warning system should do,
+but it skews class balance upward (risky goes from 30.7% of frames to 33.9% of
+training windows) and will score worse against the paper's numbers. "mode"
+preserves the balance. It is applied at windowing time, not preprocessing, so
+switching it does NOT require re-running STEP 1.
+
+Read the two evaluation modes differently. --anomaly is the one to trust:
+`risky` is UCSD's own published frame-level annotation, so that number is
+measured against real ground truth. The four-class confusion matrix depends on
+the density proxy this project defines, and density is close to constant within
+a single UCSD clip — so a high four-class accuracy is partly a measure of clip
+recognition. TRAINING.md "Labels" spells this out.
+
+Preprocessing location — cache/ is fully portable, ~3.5 GB. If you would rather
+not re-run STEP 1 on the GPU box, copy it across as-is.

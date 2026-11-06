@@ -1,0 +1,64 @@
+# Head-count config for Jetson Orin (JetPack / L4T image, Dockerfile.jetson).
+#
+# Differences vs config.docker.yaml (x86):
+#   * device auto → resolves to the Orin GPU (CUDA torch in the L4T base);
+#     half: true for FP16 — YOLOv8n runs in a few ms on the GPU.
+#   * gst_nvdec: true — RTSP decode on the SoC's NVDEC block via GStreamer,
+#     freeing the A78 CPU cores (software decode is the #1 CPU cost).
+#   * torch_threads irrelevant on GPU but kept low for the CPU fallback path.
+
+detectors:
+  - id: heads
+    label: heads
+    weights: models/abel/best.pt
+    hf_repo: AbelKidane/yolov8headdetector   # auto-downloaded on first run
+    hf_file: best.pt
+    color: [0, 255, 0]
+    device: auto            # → cuda on Jetson
+    half: true              # FP16 on the Orin GPU
+    # Same rationale as x86: furniture scores 0.40-0.46 as "head"; real heads
+    # score ~0.6-0.85. Keep 0.5 unless a site measures under-counting.
+    conf: 0.4
+    imgsz: 640
+
+pipeline:
+  smooth_window: 5
+  infer_every: 3
+  target_fps: 0
+  reconnect_delay: 3.0
+  max_reconnect_delay: 30.0
+  read_timeout: 10.0
+  # Motion gate matters even with a fast GPU: it saves decode-adjacent CPU,
+  # keeps the GPU free for the face pipeline, and cuts power (edge boxes are
+  # thermally constrained — see JetPack power modes).
+  # Two-tier counting: weak detections (0.42+) must persist ≥2 hits/0.3s to
+  # count; furniture that sneaks in gets static-flagged by the tracker within
+  # ~2min. This is what allows the low detector floor (head-down poses score
+  # 0.40-0.50 — a 0.5 floor missed a real seated person on Camera 16).
+  track_candidate_conf: 0.42
+  motion_gate: true
+  motion_threshold: 0.008
+  idle_infer_interval: 10
+  torch_threads: 4
+  # NVDEC hardware decode (requires the L4T image's GStreamer-enabled OpenCV).
+  # Template is H.264 (our sub-streams); for H.265 cameras change
+  # rtph264depay/h264parse → rtph265depay/h265parse in gst_pipeline_template.
+  gst_nvdec: true
+
+api:
+  host: 0.0.0.0
+  port: 8000
+
+source:
+  enabled: true
+  poll_interval_sec: 15
+  prefer_sub: true
+
+forward:
+  enabled: true
+  interval_sec: 5
+  monitor_by_stream: {}
+
+log_level: INFO
+
+streams: []

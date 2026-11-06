@@ -1,0 +1,13 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 2
+names: ['fire', 'smoke']
+
+roboflow:
+  workspace: chirag-sharma-ksqai
+  project: fire-and-smoke-industrial-jm4v6
+  version: dataset
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/chirag-sharma-ksqai/fire-and-smoke-industrial-jm4v6/dataset/dataset

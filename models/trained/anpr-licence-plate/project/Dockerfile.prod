@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1.6
+# ─── trinetra/anpr-worker:prod — the plate reader with its code baked in ───
+# For Kubernetes (docs/operations/KUBERNETES.md §10 item 2). Compose does NOT
+# use this file: it keeps building Dockerfile (dependencies only) and
+# bind-mounting ./trinetra-ai/app/anpr_worker to /srv/anpr.
+#
+# Build (from the repo root; trinetra/anpr-worker:latest must exist):
+#   docker build -f trinetra-ai/app/anpr_worker/Dockerfile.prod \
+#     -t trinetra/anpr-worker:prod trinetra-ai/app/anpr_worker
+# The trainer is the same code on the training image:
+#   docker build -f trinetra-ai/app/anpr_worker/Dockerfile.prod \
+#     --build-arg BASE_IMAGE=trinetra/anpr-train:latest \
+#     -t trinetra/anpr-train:prod trinetra-ai/app/anpr_worker
+#   (its Deployment runs `python auto_retrain.py`)
+#
+# Baked: the worker code and the plate models (models/ + weights/, ~64 MB:
+# best.pt, best_ft.pt, the OCR ONNX + its base, yolov8n.pt, calibrator.json).
+# NOT baked (Dockerfile.prod.dockerignore): data/ (a volume: labels, crops,
+# clips, status), export/, runs/, quarantine/, data_host_backup_*, *.csv, env
+# files and keys.
+#
+# Models in Kubernetes: the trainer promotes into models/. The Helm chart puts
+# one shared volume over /srv/anpr/models and seeds it from this image's copy
+# once (an init container), so a promotion reaches every worker shard.
+ARG BASE_IMAGE=trinetra/anpr-worker:latest
+FROM ${BASE_IMAGE}
+COPY . /srv/anpr/
+# Keep a pristine copy of the baked models for the Helm seeding init container
+# (the shared models volume hides /srv/anpr/models once mounted).
+RUN mkdir -p /srv/anpr/data /srv/anpr/export \
+ && cp -a /srv/anpr/models /srv/anpr-models-baked \
+ && (python -m compileall -q /srv/anpr >/dev/null || true)
+ENV PYTHONUNBUFFERED=1 \
+    ANPR_OCR_MODEL_DIR=/srv/anpr/models/ocr \
+    ANPR_PLATE_MODEL=/srv/anpr/models/best.pt \
+    ANPR_EXPORT_DIR=/srv/anpr/export
+ENTRYPOINT []
+WORKDIR /srv/anpr
+CMD ["python", "worker.py"]

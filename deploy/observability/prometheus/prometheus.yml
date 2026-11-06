@@ -1,0 +1,79 @@
+# Prometheus scrape config for the Drisyam VMS stack.
+#
+# Scrape interval is intentionally low (10s) for the smart-cam-backend so the
+# camera_state gauges stay close to real-time on Grafana dashboards. Every
+# other target is on the default 30s.
+#
+# Adding a new MediaMTX server: append it to the `mediamtx` job's static_configs.
+# Adding a new backend replica: extend the targets list in the `backend` job.
+
+global:
+  scrape_interval:     30s
+  scrape_timeout:      10s
+  evaluation_interval: 30s
+  external_labels:
+    cluster: drisyam
+    env:     dev
+
+scrape_configs:
+  # ── Backend (Node/Express) ─────────────────────────────────────────────────
+  - job_name: backend
+    metrics_path: /api/metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['smart-cam-backend:5000']
+        labels: { service: backend, instance_role: api }
+
+  # ── AI service (FastAPI / DeepStream) ──────────────────────────────────────
+  # Expects /metrics on port 8001 — see metrics_router in vms_face/api.
+  - job_name: ai-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['smart-cam-ai:8001']
+        labels: { service: ai }
+
+  # ── MediaMTX built-in metrics ──────────────────────────────────────────────
+  # MediaMTX exposes Prometheus on `metricsAddress` (separate port from API).
+  # Add `metrics: yes` + `metricsAddress: :9998` to mediamtx.yml and forward
+  # 9998 in docker-compose.
+  - job_name: mediamtx
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['mediamtx:9998']
+        labels: { service: mediamtx }
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  - job_name: redis
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels: { service: redis }
+
+  # ── MySQL ──────────────────────────────────────────────────────────────────
+  - job_name: mysql
+    static_configs:
+      - targets: ['mysqld-exporter:9104']
+        labels: { service: mysql }
+
+  # ── Postgres (smart-cam-ai vector store) ───────────────────────────────────
+  - job_name: postgres
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels: { service: postgres }
+
+  # ── Container metrics ──────────────────────────────────────────────────────
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels: { service: containers }
+
+  # ── Host metrics ───────────────────────────────────────────────────────────
+  - job_name: node-exporter
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels: { service: host }
+
+  # ── Prometheus self-monitor ────────────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+        labels: { service: prometheus }

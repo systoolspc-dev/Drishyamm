@@ -1,0 +1,77 @@
+# Head-count config for the Drisyam Docker stack.
+#
+# Cameras are pulled from the stream service over RTSP (the same source the VMS
+# uses) and live counts are forwarded to the backend. This file is bind-mounted,
+# so editing `streams` and running `docker restart drishyam-head-count`
+# takes effect WITHOUT a rebuild.
+
+detectors:
+  - id: heads
+    label: heads
+    weights: models/abel/best.pt
+    hf_repo: AbelKidane/yolov8headdetector   # auto-downloaded on first run
+    hf_file: best.pt
+    color: [0, 255, 0]
+    device: auto            # CPU image → runs on CPU (fine for a few cameras)
+    half: false
+    # 0.5, NOT the model's 0.35 default: measured on live NFC cameras, static
+    # objects (chair backs, monitors) score 0.40-0.46 as "head" and a consistent
+    # false box survives median smoothing forever. Real heads score ~0.6-0.85.
+    conf: 0.4
+    imgsz: 640
+
+pipeline:
+  smooth_window: 5
+  infer_every: 3            # every 3rd frame — heads don't move fast; saves CPU
+  target_fps: 0
+  reconnect_delay: 3.0
+  max_reconnect_delay: 30.0
+  read_timeout: 10.0
+  # Skip inference while the scene is static (counts can't change if nothing
+  # moved); a heartbeat inference still runs every idle_infer_interval seconds.
+  # 10s, not lower: motion triggers inference INSTANTLY anyway — the heartbeat
+  # only catches sub-threshold creep. Measured on prod (8 cams): 1.5s heartbeat
+  # = 5.3 YOLO-CPU inf/s = ~145% CPU; 10s = ~70% CPU, same counts.
+  # Two-tier counting: weak detections (0.42+) must persist ≥2 hits/0.3s to
+  # count; furniture that sneaks in gets static-flagged by the tracker within
+  # ~2min. This is what allows the low detector floor (head-down poses score
+  # 0.40-0.50 — a 0.5 floor missed a real seated person on Camera 16).
+  track_candidate_conf: 0.42
+  motion_gate: true
+  motion_threshold: 0.008
+  idle_infer_interval: 10
+  # Keep one CPU inference from grabbing every core on the shared box.
+  torch_threads: 4
+
+api:
+  # The VMS page renders camera name / count / fps as real text; a burnt-in
+  # copy collides with it and neither stays legible. Boxes still drawn.
+  preview_banner: false
+  host: 0.0.0.0
+  port: 8000
+
+# Dynamic cameras: head-count is toggled PER CAMERA in the VMS. This service polls
+# the backend for cameras that have head-count enabled and counts those — there's
+# no camera list to maintain here. BACKEND_URL + SERVICE_TOKEN come from the
+# environment (docker-compose → ./smart-cam-ai/.env).
+source:
+  enabled: true
+  poll_interval_sec: 15
+  prefer_sub: true          # count on the lighter sub-stream
+
+# Forward live counts to the VMS backend. BACKEND_URL + SERVICE_TOKEN come from
+# the environment (set in docker-compose via ./smart-cam-ai/.env), so no secret
+# lives in this file.
+forward:
+  enabled: true
+  interval_sec: 5
+  # If a stream id already equals the camera's monitorId (as below), leave empty.
+  # Otherwise map: { "<stream id>": "<monitorId>" }.
+  monitor_by_stream: {}
+
+log_level: INFO
+
+# Dynamic mode (source.enabled above) populates cameras at runtime from the ones
+# users enable in the VMS, so this stays empty. To pin a fixed camera instead,
+# set source.enabled=false and add entries here (id MUST be the camera monitorId).
+streams: []

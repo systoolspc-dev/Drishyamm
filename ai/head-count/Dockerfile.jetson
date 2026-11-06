@@ -1,0 +1,49 @@
+# head-count — Jetson Orin (arm64 / JetPack) build.
+#
+# Differences vs the x86 Dockerfile:
+#   * Base = L4T PyTorch image: CUDA-enabled torch + an OpenCV built WITH
+#     GStreamer (needed for NVDEC decode). The PyPI wheels would break both —
+#     torch CPU-only and opencv-python-headless without GStreamer — so every
+#     pip install below is --no-deps with dependencies listed explicitly.
+#   * YOLO runs on the Orin GPU automatically (device: auto → cuda); set
+#     `half: true` in config for FP16.
+#   * RTSP decode goes to the SoC's NVDEC via config `pipeline.gst_nvdec: true`.
+#
+# Pick BASE to match the device's JetPack (L4T) version, e.g.:
+#   JetPack 6.x:  dustynv/l4t-pytorch:r36.4.0   (or build via jetson-containers)
+#   JetPack 5.x:  dustynv/l4t-pytorch:r35.4.1
+# Check yours with:  cat /etc/nv_tegra_release
+ARG BASE=dustynv/l4t-pytorch:r36.4.0
+FROM ${BASE}
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /srv/head-count
+
+# ultralytics WITHOUT deps (would drag in opencv-python + torch wheels and
+# shadow the CUDA/GStreamer builds in the base image), then its actual
+# runtime needs that the base doesn't already ship.
+RUN pip3 install --no-deps "ultralytics>=8.4" \
+    && pip3 install pillow pyyaml requests scipy tqdm psutil py-cpuinfo pandas matplotlib
+
+# Our package, same story: --no-deps, then the explicit runtime deps
+# (numpy/opencv/torch come from the base image).
+COPY pyproject.toml ./
+COPY src ./src
+COPY config ./config
+RUN pip3 install --no-deps . \
+    && pip3 install "fastapi>=0.115" "uvicorn[standard]>=0.34" "pydantic>=2.10" "huggingface-hub>=0.27"
+
+# Sanity check at build time: fail the build if cv2 lost GStreamer or torch
+# lost CUDA (means a wheel shadowed the base install).
+RUN python3 - <<'EOF'
+import cv2, torch
+info = cv2.getBuildInformation()
+assert "GStreamer" in info and "YES" in info.split("GStreamer",1)[1][:80], "cv2 has no GStreamer!"
+print("cv2 GStreamer: OK | torch CUDA available:", torch.cuda.is_available())
+EOF
+
+EXPOSE 8000
+CMD ["headcount", "--config", "config/config.jetson.yaml"]

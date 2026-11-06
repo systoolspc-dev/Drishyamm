@@ -1,0 +1,66 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic-settings>=2.6
+python-multipart>=0.0.20
+httpx>=0.27
+sqlalchemy[asyncio]>=2.0,<3.0
+asyncpg>=0.30
+alembic>=1.13
+psycopg2-binary>=2.9
+qdrant-client>=1.12
+# pgvector — SQLAlchemy `Vector` column type for the journey embeddings mirror
+# (face_vec/body_vec) in Postgres. domain.models imports it at module level, so
+# rebuild the image after adding this (else uvicorn/alembic fail on import).
+pgvector>=0.3
+# aiokafka — journey module produces journey.events to the Kafka spine (P1).
+aiokafka>=0.11
+redis>=5.1
+minio>=7.2
+# RQ — journey stitch worker (FFmpeg jobs). PIN to 1.16.x: RQ 2.x removed
+# `rq.Connection`, which the worker uses. Do not bump to >=2 without porting.
+rq>=1.16,<2.0
+# ReportLab — journey PDF report generation (journey/pdf.py).
+reportlab>=4.0
+structlog>=24.4
+prometheus-client>=0.21
+av>=13.1
+python-dotenv>=1.0
+typer>=0.12
+
+opencv-python-headless>=4.10
+numpy>=1.26,<3.0
+scipy>=1.14            # Hungarian assignment for the SORT-style tracker (Phase 2)
+Pillow>=10.0
+
+# Observability — psutil is required (CPU/RSS gauges); nvidia-ml-py is
+# optional (GPU gauges) and the poller falls back gracefully when missing.
+psutil>=6.1
+nvidia-ml-py>=12.560
+
+insightface>=0.7.3
+onnxruntime-gpu==1.26.0
+# TensorRT 10 runtime (libnvinfer.so.10 + libnvonnxparser.so.10) for ORT's
+# TensorRT execution provider — infra/ort_session.py preloads it and falls
+# back to CUDA when absent. 10.16 carries the sm120 (Blackwell) builder.
+--extra-index-url https://pypi.nvidia.com
+tensorrt-cu12-libs==10.16.1.11
+
+# Auth — vms_face.core.security does `import jwt` at module level. Without
+# this, every vms_face.api.deps import fails and uvicorn never starts.
+PyJWT>=2.9,<3.0
+
+# Encryption-at-rest — vms_face.core.crypto imports cryptography at module
+# level for AES-256-GCM on Camera.rtsp_url. Without this, the worker fails
+# on domain.models import (TypeDecorator → crypto → cryptography).
+cryptography>=43.0
+
+# OpenTelemetry distributed tracing. Off by default (VMS_OTEL_ENABLED=false);
+# imports inside vms_face.core.tracing are wrapped in try/except so missing
+# packages don't crash startup, but the operator-friendly path is to install
+# them at build time so flipping the flag at runtime Just Works.
+opentelemetry-api>=1.27,<2.0
+opentelemetry-sdk>=1.27,<2.0
+opentelemetry-exporter-otlp-proto-grpc>=1.27,<2.0
+opentelemetry-instrumentation-fastapi>=0.48b0
+opentelemetry-instrumentation-sqlalchemy>=0.48b0
+opentelemetry-instrumentation-redis>=0.48b0

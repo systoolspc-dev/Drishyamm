@@ -1,0 +1,115 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Face pipeline at scale (Phase 2 layout, docs/FACE_SYSTEM_DESIGN.md)
+#
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml up -d
+#
+# What changes vs the single-process default:
+#   * 4 inference servers (smart-cam-infer..-3) hold the detector + recognizer
+#     engines; every camera of every shard batches on the same sessions.
+#   * smart-cam-ai becomes shard 0 = API + singletons only (owns no cameras);
+#     shards 1..4 own cameras by id % 5 and load no models.
+# Measured on an RTX PRO 5000 (Blackwell, 72 GB): 290 frames/s at 43 cameras,
+# 7.1 fps/camera, detect 21 ms. One process saturates at ~10-20 cameras
+# because its event loop starves behind its own decode threads, so more,
+# smaller shards is the scaling knob on one box.
+#
+# Every added service `extends` smart-cam-ai from docker-compose.yml, so it
+# gets the same image, GPU, volumes and full environment. Needs Docker
+# Compose >= 2.24 (for `!reset`).
+# ═══════════════════════════════════════════════════════════════════════════
+
+x-shard-env: &shard-env
+  AI_SHARD_COUNT: "5"
+  AI_SHARD_PRIMARY_OWNS_CAMERAS: "false"
+  AI_SHARD_PEERS: http://smart-cam-ai:8001,http://smart-cam-ai-1:8001,http://smart-cam-ai-2:8001,http://smart-cam-ai-3:8001,http://smart-cam-ai-4:8001
+  INFER_SERVICE_URL: tcp://smart-cam-infer:9010,tcp://smart-cam-infer-1:9010,tcp://smart-cam-infer-2:9010,tcp://smart-cam-infer-3:9010
+
+x-infer: &infer
+  extends:
+    file: docker-compose.yml
+    service: smart-cam-ai
+  command: ["python", "-m", "vms_face.workers.infer_server"]
+  healthcheck:
+    test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9010), 2).close()"]
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 120s
+
+x-shard: &shard
+  extends:
+    file: docker-compose.yml
+    service: smart-cam-ai
+  # No alembic: shard 0 owns migrations.
+  command: ["sh", "-c", "uvicorn vms_face.api.main:app --host 0.0.0.0 --port 8001"]
+
+services:
+  smart-cam-ai:
+    environment:
+      <<: *shard-env
+      AI_SHARD_INDEX: "0"
+    depends_on:
+      smart-cam-infer:
+        condition: service_healthy
+      smart-cam-infer-1:
+        condition: service_healthy
+
+  smart-cam-ai-worker:
+    environment:
+      <<: *shard-env
+
+  # INFER_SERVICE_ROLE=server makes each build local models even though the
+  # shared env points at the pool.
+  smart-cam-infer:
+    <<: *infer
+    ports: !reset []
+    container_name: drishyam-infer
+    environment: {<<: *shard-env, INFER_SERVICE_ROLE: server}
+  smart-cam-infer-1:
+    <<: *infer
+    ports: !reset []
+    container_name: drishyam-infer-1
+    environment: {<<: *shard-env, INFER_SERVICE_ROLE: server}
+  smart-cam-infer-2:
+    <<: *infer
+    ports: !reset []
+    container_name: drishyam-infer-2
+    environment: {<<: *shard-env, INFER_SERVICE_ROLE: server}
+  smart-cam-infer-3:
+    <<: *infer
+    ports: !reset []
+    container_name: drishyam-infer-3
+    environment: {<<: *shard-env, INFER_SERVICE_ROLE: server}
+
+  smart-cam-ai-1:
+    <<: *shard
+    ports: !reset []
+    depends_on: !override
+      smart-cam-ai:
+        condition: service_started
+    container_name: drishyam-ai-1
+    environment: {<<: *shard-env, AI_SHARD_INDEX: "1"}
+  smart-cam-ai-2:
+    <<: *shard
+    ports: !reset []
+    depends_on: !override
+      smart-cam-ai:
+        condition: service_started
+    container_name: drishyam-ai-2
+    environment: {<<: *shard-env, AI_SHARD_INDEX: "2"}
+  smart-cam-ai-3:
+    <<: *shard
+    ports: !reset []
+    depends_on: !override
+      smart-cam-ai:
+        condition: service_started
+    container_name: drishyam-ai-3
+    environment: {<<: *shard-env, AI_SHARD_INDEX: "3"}
+  smart-cam-ai-4:
+    <<: *shard
+    ports: !reset []
+    depends_on: !override
+      smart-cam-ai:
+        condition: service_started
+    container_name: drishyam-ai-4
+    environment: {<<: *shard-env, AI_SHARD_INDEX: "4"}

@@ -1,0 +1,122 @@
+# Observability overlay — opt-in.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f deploy/observability/docker-compose.observability.yml up -d   (from the repo root)
+#
+# Brings up:
+#   prometheus       — scrapes backend, AI, MediaMTX, exporters     (:9090)
+#   grafana          — dashboards (Drisyam Fleet pre-provisioned)   (:3001)
+#   cadvisor         — per-container CPU/RAM/IO                     (:8080)
+#   node-exporter    — host CPU/load/disk/net                       (:9100)
+#   redis-exporter   — Redis ops + memory                           (:9121)
+#   mysqld-exporter  — InnoDB + connection pool metrics             (:9104)
+#   postgres-exporter — Postgres pg_stat_database, locks, etc.      (:9187)
+#
+# Network: joins the same default project network so service-name DNS
+# (smart-cam-backend, redis, mysql, postgres, mediamtx) resolves correctly.
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: drisyam-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./deploy/observability/prometheus:/etc/prometheus:ro
+      - drisyam-prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: drisyam-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER:     ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASS:-admin}
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - drisyam-grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: drisyam-cadvisor
+    restart: unless-stopped
+    command: ["-housekeeping_interval=10s", "-docker_only=true"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    ports:
+      - "8081:8080"
+
+  # node-exporter — host metrics. On Linux deployments uncomment the rootfs
+  # mount + pid:host below for full host visibility. On Docker Desktop
+  # (Windows / Mac) the bind would fail because `/` is not a shared mount,
+  # so we run the exporter standalone — it still exposes useful container
+  # metrics, just not the host's CPU / disks.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: drisyam-node-exporter
+    restart: unless-stopped
+    command:
+      - "--collector.netclass.ignored-devices=^(veth.*|docker.*|br-.*|lo)$$"
+    # pid: host                          # Linux only
+    # volumes:                            # Linux only
+    #   - /:/host:ro,rslave
+    # command (Linux): add  "--path.rootfs=/host"
+    ports:
+      - "9100:9100"
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    container_name: drisyam-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: drisyam-mysqld-exporter
+    restart: unless-stopped
+    command:
+      - "--mysqld.username=root:"
+      - "--mysqld.address=mysql:3306"
+    ports:
+      - "9104:9104"
+    depends_on:
+      - mysql
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: drisyam-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://vms:vms@postgres:5432/vms_face?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+
+volumes:
+  drisyam-prometheus-data:
+  drisyam-grafana-data:

@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1.6
+# Training image for the ANPR retraining loop = the worker image + the
+# fast-plate-ocr training extras (Keras 3 + TensorFlow, ~600 MB). Kept
+# separate so the always-on worker stays lean. Build:
+#   docker build -f Dockerfile.train -t trinetra/anpr-train:latest .
+# Run (compose network so export_labels.py can reach the backend):
+#   docker run --rm --gpus all --network drisyam_default \
+#     -v "<repo>/trinetra-ai/app/anpr_worker:/srv/anpr" -w /srv/anpr \
+#     trinetra/anpr-train:latest sh -c "python export_labels.py --backend http://trinetra-backend:5000 && python train_ocr.py --epochs 30"
+FROM trinetra/anpr-worker:latest
+ENV KERAS_BACKEND=tensorflow TF_CPP_MIN_LOG_LEVEL=2 TF_ENABLE_ONEDNN_OPTS=0
+# GPU training (10 Sep 2026). The TensorFlow wheel is CUDA-built but finds no
+# CUDA/cuDNN libraries on its own; torch already ships them as pip packages
+# under site-packages/nvidia/*/lib, so LD_LIBRARY_PATH points there. XLA (which
+# Keras 3 uses to compile the training step) additionally needs libdevice from
+# the CUDA toolkit — nvidia-cuda-nvcc-cu12 provides nvvm/libdevice/libdevice.10.bc
+# and XLA_FLAGS tells XLA where. Without these, OCR training ran on the CPU
+# (~10 h a cycle) and, once on the GPU, died with "libdevice not found".
+ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:/opt/conda/lib/python3.11/site-packages/nvidia/cublas/lib:/opt/conda/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:/opt/conda/lib/python3.11/site-packages/nvidia/cuda_nvrtc/lib:/opt/conda/lib/python3.11/site-packages/nvidia/cuda_cupti/lib:/opt/conda/lib/python3.11/site-packages/nvidia/cufft/lib:/opt/conda/lib/python3.11/site-packages/nvidia/curand/lib:/opt/conda/lib/python3.11/site-packages/nvidia/cusolver/lib:/opt/conda/lib/python3.11/site-packages/nvidia/cusparse/lib:/opt/conda/lib/python3.11/site-packages/nvidia/nccl/lib:/opt/conda/lib/python3.11/site-packages/nvidia/nvjitlink/lib \
+    XLA_FLAGS=--xla_gpu_cuda_data_dir=/opt/conda/lib/python3.11/site-packages/nvidia/cuda_nvcc
+RUN pip install --no-cache-dir "fast-plate-ocr[train]" "nvidia-cuda-nvcc-cu12" \
+ && python -c "import keras, tensorflow, albumentations; print('train deps OK keras', keras.__version__, 'tf', tensorflow.__version__)" \
+ && test -f /opt/conda/lib/python3.11/site-packages/nvidia/cuda_nvcc/nvvm/libdevice/libdevice.10.bc

@@ -1,0 +1,2 @@
+# Install a CUDA-enabled PyTorch build separately (see README_TRAINING.md).
+ultralytics>=8.3.0,<9.0.0

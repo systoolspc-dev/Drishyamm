@@ -1,0 +1,101 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Cameras streaming",
+      "targets": [
+        { "expr": "sum(drisyam_camera_state{state=\"streaming\"} == 1)", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Cameras offline",
+      "targets": [
+        { "expr": "sum(drisyam_camera_state{state=\"offline\"} == 1)", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 50 }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Cameras quarantined",
+      "targets": [
+        { "expr": "sum(drisyam_camera_state{state=\"quarantined\"} == 1)", "refId": "A" }
+      ],
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Camera state over time",
+      "targets": [
+        { "expr": "sum by (state) (drisyam_camera_state == 1)", "refId": "A", "legendFormat": "{{ state }}" }
+      ],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Camera ingress bitrate (top 20)",
+      "targets": [
+        { "expr": "topk(20, drisyam_camera_bps_in)", "refId": "A", "legendFormat": "{{ monitor_id }}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "bps" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Supervisor transitions / minute",
+      "targets": [
+        { "expr": "sum by (to) (rate(drisyam_camera_transitions_total[1m])) * 60", "refId": "A", "legendFormat": "→ {{ to }}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend HTTP P99 by route",
+      "targets": [
+        { "expr": "histogram_quantile(0.99, sum by (route, le) (rate(drisyam_http_request_seconds_bucket[5m])))", "refId": "A", "legendFormat": "{{ route }}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend HTTP RPS by status",
+      "targets": [
+        { "expr": "sum by (status) (rate(drisyam_http_requests_total[1m]))", "refId": "A", "legendFormat": "{{ status }}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Node.js event loop lag",
+      "targets": [
+        { "expr": "drisyam_nodejs_eventloop_lag_seconds", "refId": "A", "legendFormat": "{{ instance }}" }
+      ],
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "MediaMTX paths active per server",
+      "targets": [
+        { "expr": "drisyam_mediamtx_paths_active", "refId": "A", "legendFormat": "{{ server }}" }
+      ],
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 28 }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["drisyam", "vms"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "",
+  "title": "Drisyam VMS — Fleet Health",
+  "uid": "drisyam-fleet",
+  "version": 1
+}

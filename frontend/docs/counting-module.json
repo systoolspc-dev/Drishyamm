@@ -1,0 +1,368 @@
+{
+  "_meta": {
+    "title": "Drishyam counting module: models, services, logic, data flow",
+    "date": "2026-10-27 (gate line made any-angle the same day)",
+    "scope": [
+      "crowd count",
+      "head-count / occupancy",
+      "footfall",
+      "gate in/out"
+    ],
+    "purpose": "Reference for refactoring the Gate Activity Matrix and letting a gate line be drawn at any angle",
+    "paths": "Relative to repo root. Line refs are file:line."
+  },
+  "data_flow": {
+    "summary": "Head-count PUSHES live occupancy to the backend. Footfall and activity-monitor are PULL-only, and the backend proxies them. There is no realtime count socket: the frontend polls everything.",
+    "pipelines": {
+      "occupancy": [
+        "camera RTSP (sub-stream)",
+        "head-count :8020 (YOLOv8 head, confirmed tracks, zone point-in-polygon)",
+        "POST /api/internal/ai/occupancy every 5 s",
+        "backend: Redis occupancy:live:<monitorId> (30 s TTL) + occ:acc minute hash",
+        "aggregator: occupancy_camera_minute (60 s), then occupancy_space_rollup 15m/1h/1d (5 min)",
+        "fuse.js gives the room count; evaluator (10 s) opens incidents and emits occupancy.* ai.event",
+        "frontend: GET /spaces/live, /occupancy/history, /occupancy/summary; head-count /streams polled directly every 1.5 s"
+      ],
+      "footfall_gate": [
+        "camera RTSP",
+        "vms_face :8001 (SCRFD face boxes, or YOLOv8n ONNX person boxes when PIPELINE_PERSON_DETECTION_ENABLED)",
+        "services/footfall.py: centroid tracker; cross-product side test against segment a-b (any angle), dead band, min 3 frames, 1 s re-count cooldown",
+        "Postgres footfall_minute_buckets (upsert every 5 s)",
+        "backend proxy /api/ai/footfall/*",
+        "frontend useOccupancy: /footfall/cameras every 5 s, /footfall/timeseries hourly every 60 s",
+        "occupancy-data.js buildLineZones, then GateActivityMatrix"
+      ],
+      "crowd_zone": [
+        "zone-sim (YOLOv8n person) or vms_face overlay",
+        "POST /api/internal/ai/overlay about 4 per second",
+        "backend zoneIntrusion.service.js (feet point in polygon, maxOccupancy capacity mode)",
+        "socket ai.live / ai.event (zone.intrusion, occupancy.threshold)"
+      ],
+      "attendance_line": [
+        "activity-monitor :8010 (yolov8s-pose)",
+        "crossing.py: line at any angle, cross-product side test",
+        "SQLite crossings",
+        "backend proxy /api/ai/activity/{crossings,attendance,line}"
+      ],
+      "config_down": "Every AI service polls GET /api/internal/cameras for settings.headcount.{enabled, threshold, zones, imgsz}. Footfall config lives in AI Postgres cameras.config_json.footfall, not in the backend."
+    }
+  },
+  "models": [
+    {
+      "service": "head-count",
+      "path": "smart-cam-ai/app/head-count/src/headcount/",
+      "model": "YOLOv8 head detector (HF AbelKidane/yolov8headdetector best.pt), conf 0.4, imgsz 640",
+      "counts": "Confirmed tracks: 2 hits at least 0.3 s apart, or one hit at conf >= 0.65. A track expires after 2 misses or 6 s. Static tracks are excluded.",
+      "push_to_backend": {
+        "endpoint": "POST /api/internal/ai/occupancy",
+        "every_sec": 5,
+        "body": {
+          "source": "head-count",
+          "streams": [
+            {
+              "monitorId": "string",
+              "heads": "int",
+              "connected": "bool",
+              "reliable": "bool",
+              "ageSec": "float|null",
+              "degraded": "bool",
+              "tracked": "int",
+              "status": "starting|online|reconnecting|stopped|error"
+            }
+          ]
+        },
+        "note": "zone_counts is NOT forwarded to the backend"
+      },
+      "rest": {
+        "GET /streams": {
+          "streams": [
+            {
+              "id": "monitorId",
+              "name": "string",
+              "status": "string",
+              "connected": "bool",
+              "counts": {
+                "heads": "int"
+              },
+              "total": "int",
+              "tracked": "int",
+              "zone_counts": {
+                "<zoneId|zoneName>": "int"
+              },
+              "count_reliable": "bool",
+              "gate_saturated": "bool",
+              "count_age_s": "float",
+              "fps": "float",
+              "infer_ms": "float"
+            }
+          ]
+        },
+        "GET /count": {
+          "counts": {
+            "<id>": {
+              "<label>": "int"
+            }
+          },
+          "totals": "object",
+          "streams_online": "int",
+          "streams_total": "int"
+        },
+        "GET /video/{id}": "MJPEG stream",
+        "GET /snapshot/{id}": "JPEG image"
+      }
+    },
+    {
+      "service": "vms_face footfall",
+      "path": "smart-cam-ai/app/face_detection/vms_face/services/footfall.py",
+      "model": "SCRFD face boxes by default; YOLOv8n ONNX person boxes (COCO class 0, score 0.35) when enabled",
+      "counts": "In/out per camera per minute: in_count, out_count, falls_count",
+      "rest": {
+        "GET /footfall/cameras": {
+          "totals_today": {
+            "in": "int",
+            "out": "int",
+            "falls": "int",
+            "cameras_tracking": "int",
+            "cameras_total": "int"
+          },
+          "cameras": [
+            {
+              "camera_id": "uuid (AI id, NOT monitorId)",
+              "camera_code": "monitorId",
+              "camera_name": "string",
+              "camera_status": "string",
+              "footfall_enabled": "bool",
+              "line": "{a:[x,y], b:[x,y]} normalised 0..1, any angle",
+              "line_y_frac": "float (read-only legacy echo: midpoint height)",
+              "direction": "right_is_in|left_is_in (relative to a->b on screen)",
+              "falls_enabled": "bool",
+              "today": {
+                "in": "int",
+                "out": "int",
+                "falls": "int"
+              },
+              "session": {
+                "in": "int",
+                "out": "int",
+                "falls": "int",
+                "active_tracks": "int",
+                "last_update_age_sec": "float"
+              }
+            }
+          ],
+          "ts": "iso"
+        },
+        "GET /footfall/timeseries?granularity=minute|hour|day&from&to&camera_id": {
+          "granularity": "string",
+          "from": "iso",
+          "to": "iso",
+          "camera_id": "uuid|null",
+          "points": [
+            {
+              "bucket": "iso",
+              "in_count": "int",
+              "out_count": "int",
+              "falls_count": "int"
+            }
+          ]
+        },
+        "GET|PUT /footfall/cameras/{id}/config": {
+          "enabled": "bool",
+          "line": "{a:[x,y], b:[x,y]} (422 if < 3% of frame)",
+          "direction": "right_is_in|left_is_in",
+          "falls_enabled": "bool",
+          "legacy_accepted": "line_y_frac + down_is_in|up_is_in (becomes a full-width level line)"
+        },
+        "GET /footfall/export.csv": "columns: bucket_minute_utc, camera_code, camera_name, in_count, out_count, falls_count"
+      }
+    },
+    {
+      "service": "vms_face live person count (crowd)",
+      "path": "smart-cam-ai/app/face_detection/vms_face/infra/detection_cache.py",
+      "model": "SCRFD + face recognition; optional YOLOv8n person",
+      "redis_publish": "vms.cam.state:{camera_id} -> {event:'frame', camera_id, camera_code, boxes[], frame_w, frame_h, running, active_tracks, persons_present}",
+      "api_payload": {
+        "persons": "int (max of persons_present and box count)",
+        "people": {
+          "total": "int",
+          "known": "int",
+          "unknown": "int",
+          "male": "int",
+          "female": "int",
+          "gender_unknown": "int",
+          "smoothed_total": "int",
+          "smoothed_known": "int",
+          "smoothed_unknown": "int",
+          "window_sec": 2
+        }
+      },
+      "backend_view": "GET /api/ai/people-count -> {running_cameras, total, known, unknown, smoothed_total, heads_total?, cameras:[{camera_id, monitor_id, name, total, known, unknown, smoothed_total, running, heads?, headcount?}]}"
+    },
+    {
+      "service": "zone-sim",
+      "path": "smart-cam-ai/app/zone-sim/zone_sim.py",
+      "model": "YOLOv8n .pt, person class only, conf 0.35, 4 fps",
+      "push_to_backend": {
+        "endpoint": "POST /api/internal/ai/overlay",
+        "body": {
+          "userId": "string",
+          "monitorId": "string",
+          "ts": "int ms",
+          "frameW": "int",
+          "frameH": "int",
+          "boxes": [
+            {
+              "bbox": "[x1,y1,x2,y2] px",
+              "conf": "float",
+              "trackId": "int?"
+            }
+          ]
+        }
+      },
+      "note": "Demo or simulation source. All zone logic runs in the backend."
+    },
+    {
+      "service": "activity-monitor",
+      "path": "smart-cam-ai/app/activity-monitor/src/activity_monitor/",
+      "model": "yolov8s-pose (conf 0.40) + phone.pt",
+      "line": "{x1, y1, x2, y2, inside_x, inside_y}, normalised, any angle",
+      "rest": {
+        "GET /activity/crossings": {
+          "crossings": [
+            {
+              "person_key": "string",
+              "name": "string",
+              "stream": "string",
+              "direction": "in|out",
+              "ts": "iso",
+              "duration_sec": "float?"
+            }
+          ],
+          "total": "int"
+        },
+        "GET /activity/attendance": {
+          "date": "string",
+          "people": [
+            {
+              "name": "string",
+              "first_entry": "iso",
+              "in_count": "int",
+              "out_count": "int",
+              "currently_inside": "bool",
+              "total_inside_sec": "int"
+            }
+          ],
+          "inside_count": "int",
+          "unknown_inside": "int",
+          "totals": {
+            "in": "int",
+            "out": "int",
+            "in_known": "int",
+            "in_unknown": "int"
+          }
+        },
+        "PUT /activity/line": {
+          "camera": "camera_code",
+          "line": "{x1,y1,x2,y2,inside_x,inside_y}"
+        }
+      },
+      "relevance": "This is the existing any-angle in/out implementation. Reuse its math for footfall."
+    }
+  ],
+  "services_files": {
+    "ai": {
+      "smart-cam-ai/app/head-count/src/headcount/forwarder.py": "Pushes occupancy to the backend every 5 s",
+      "smart-cam-ai/app/head-count/src/headcount/source.py": "Polls the camera registry and headcount settings every 15 s",
+      "smart-cam-ai/app/face_detection/vms_face/api/routes/footfall.py": "Footfall REST API and config PUT",
+      "smart-cam-ai/app/face_detection/vms_face/pipeline/orchestrator.py:592-633": "Feeds boxes into footfall",
+      "smart-cam-ai/app/zone-sim/zone_sim.py": "YOLO person boxes sent to the overlay endpoint"
+    },
+    "backend": {
+      "smart-cam-backend/src/routes/internal.routes.js": "AI ingest: /ai/occupancy (182-289), /ai/overlay (312-329), /ai/events, /stampede-alert",
+      "smart-cam-backend/src/routes/ai.routes.js": "Proxies for /footfall/* (81-85), /people-count, /cameras/:id/headcount, /activity/*",
+      "smart-cam-backend/src/controllers/ai.controller.js": "Footfall proxy (920-1003), peopleCount (830-910), setCameraHeadcount (1220-1291)",
+      "smart-cam-backend/src/routes/occupancy.routes.js": "/occupancy/history and /occupancy/summary",
+      "smart-cam-backend/src/controllers/space.controller.js": "Spaces CRUD and /spaces/live (fused room counts)",
+      "smart-cam-backend/src/services/occupancyAggregator.service.js": "Redis minute hash to MySQL minute rows and rollups",
+      "smart-cam-backend/src/services/occupancyEvaluator.service.js": "10 s room capacity state machine and incidents",
+      "smart-cam-backend/src/services/zoneIntrusion.service.js": "Point-in-polygon zone and capacity engine"
+    },
+    "frontend": {
+      "smart-cam-app/src/core/services/ai.js:144-186": "Footfall API client",
+      "smart-cam-app/src/modules/occupancy/useOccupancy.js": "The single polling hook (head-count 1.5 s, footfall 5 s, timeseries 60 s)",
+      "smart-cam-app/src/modules/occupancy/Occupancy.jsx:373-396": "Renders the Gate Activity Matrix panel"
+    }
+  },
+  "logic_files": {
+    "smart-cam-ai/app/face_detection/vms_face/services/footfall.py": "Gate crossing math (horizontal only), centroid tracker, minute buckets",
+    "smart-cam-ai/app/activity-monitor/src/activity_monitor/crossing.py": "Any-angle crossing math (cross product, inside reference point, min_frames=3)",
+    "smart-cam-ai/app/face_detection/vms_face/services/detection_zones.py:77-89": "Half-plane test for an angled line (used as a filter only)",
+    "smart-cam-ai/app/head-count/src/headcount/zones.py": "Zone point-in-polygon with exit hysteresis",
+    "smart-cam-backend/src/services/occupancy/fuse.js": "room = sum over overlap groups of max(heads x weight)",
+    "smart-cam-backend/src/services/occupancy/quality.js": "measured / partial / stale / unknown; canBreach / canClear",
+    "smart-cam-backend/src/services/occupancyHysteresis.js": "K-poll confirm and deadband clear",
+    "smart-cam-app/src/modules/occupancy/gate-model.js": "Client gate contract (clamp, nudge, flip, patch)",
+    "smart-cam-app/src/modules/occupancy/occupancy-data.js": "buildLineZones (matrix rows), buildMacro (tiles), buildTimeline (hourly flow)",
+    "smart-cam-app/docs/OCCUPANCY_LOGIC.md": "Occupancy doctrine (count NULL means unknown)",
+    "smart-cam-app/docs/footfall-line-length.md": "Existing design note for the line-segment change"
+  },
+  "gate_activity_matrix": {
+    "component": "smart-cam-app/src/modules/occupancy/components/bits.jsx:113-194 (GateActivityMatrix)",
+    "columns": [
+      "Gate",
+      "In",
+      "Out",
+      "Net inside",
+      "Share of traffic"
+    ],
+    "row_shape": {
+      "id": "camera_id",
+      "monitorId": "camera_code",
+      "label": "string",
+      "area": "group name or Unassigned",
+      "in": "today.in",
+      "out": "today.out",
+      "inside": "max(0, in - out)",
+      "line": "{a,b}",
+      "direction": "right_is_in|left_is_in"
+    },
+    "row_builder": "occupancy-data.js:163-188 (keeps only footfall_enabled, sorted by in descending)",
+    "geometry_shown": "bits.jsx GateGlyph (mini line + IN arrow) and \"level line\" / \"tilted N°\" / \"upright line\"",
+    "configure": "Gear button opens /occupancy/zone-setup?gate=<monitorId>"
+  },
+  "gate_line": {
+    "status": "IMPLEMENTED 2026-10-27 (uncommitted)",
+    "stored": "AI Postgres cameras.config_json.footfall = {enabled, line:{a,b}, direction, falls_enabled, line_y_frac(echo)}",
+    "crossing": {
+      "point": "feet (bottom-centre) for YOLO person boxes, box centre for face boxes; never mixed on one camera",
+      "side_test": "s = (bx-ax)*(py-ay) - (by-ay)*(px-ax); s > 0 = right of a->b in image coords (y down)",
+      "segment_only": "counts only if the step crosses between a and b (+ half a box width slack)",
+      "dead_band": "max(3 px, 0.08 x box height)",
+      "min_track_frames": 3,
+      "recount_cooldown_sec": 1,
+      "in_then_out": "one track counts both directions (old once-per-track latch removed)"
+    },
+    "legacy": "line_y_frac y -> a=[0,y], b=[1,y]; down_is_in -> right_is_in, up_is_in -> left_is_in (relative to the line orientation)",
+    "live_reconfig": "PUT is forwarded to the shard that owns the camera; orchestrator reads the registry each frame, so enabling a gate needs no camera restart",
+    "editor": "GateCanvas: drag an end to turn/stretch, drag the line to move, press-drag elsewhere to draw a new one (ordered left->right), arrow keys move a focused end",
+    "files": [
+      "smart-cam-ai/app/face_detection/vms_face/services/footfall.py",
+      "smart-cam-ai/app/face_detection/vms_face/api/routes/footfall.py",
+      "smart-cam-ai/app/face_detection/vms_face/pipeline/orchestrator.py",
+      "smart-cam-ai/app/face_detection/vms_face/tests/test_footfall_line.py",
+      "smart-cam-app/src/modules/occupancy/gate-model.js (+ .test.js)",
+      "smart-cam-app/src/modules/occupancy/zone-setup/GateCanvas.jsx",
+      "smart-cam-app/src/modules/occupancy/zone-setup/{GateEditor,GateLineEditor,useGateDraft,ZoneSetup}",
+      "smart-cam-app/src/modules/occupancy/components/bits.jsx (GateGlyph, matrix row)",
+      "smart-cam-app/src/modules/occupancy/occupancy-data.js"
+    ]
+  },
+  "known_issues": [
+    "Day boundaries are UTC midnight (routes/footfall.py:51-55), but users are on IST.",
+    "Backend coerces heads to 0 before the quality check (internal.routes.js:190), and peopleCount uses Number(heads)||0. Both break the NULL-means-unknown rule.",
+    "The overlay route drops compact frames (v:2, b[]) from vms_face (internal.routes.js:317-326).",
+    "occupancy_space_minute is never written. The rollup's space_id actually holds camera_id. timeOverCapacityMin is always 0.",
+    "The restricted-zone API cannot set maxOccupancy.",
+    "No socket event carries live counts: everything is polled."
+  ]
+}

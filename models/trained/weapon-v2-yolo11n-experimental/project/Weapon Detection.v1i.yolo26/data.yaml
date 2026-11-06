@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 6
+names: ['billete', 'knife', 'monedero', 'pistol', 'smartphone', 'tarjeta']
+
+roboflow:
+  workspace: vidit-ghai-7vysa
+  project: weapon-detection-t2esr-rujn8
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/vidit-ghai-7vysa/weapon-detection-t2esr-rujn8/dataset/1

@@ -1,0 +1,45 @@
+{
+  "version": "2026-09-02",
+  "state_codes": [
+    "AP", "AR", "AS", "BR", "CG", "GA", "GJ", "HR", "HP", "JH", "JK", "KA", "KL", "MP",
+    "MH", "MN", "ML", "MZ", "NL", "OD", "OR", "PB", "RJ", "SK", "TN", "TS", "TG", "TR", "UP",
+    "UK", "UA", "WB", "AN", "CH", "DN", "DD", "DL", "LD", "PY", "LA"
+  ],
+  "templates": {
+    "8": ["LLDLDDDD", "LLDDDDDD"],
+    "9": ["LLDLLDDDD", "LLDDLDDDD", "DDBHDDDDL"],
+    "10": ["LLDDLLDDDD", "DDBHDDDDLL", "LLDLLLDDDD"],
+    "11": ["LLDDLLLDDDD"]
+  },
+  "template_prior": {
+    "LLDDLLDDDD": 0.0,
+    "LLDDLDDDD": -0.3,
+    "DDBHDDDDLL": -1.2,
+    "DDBHDDDDL": -1.5,
+    "LLDLLDDDD": -1.5,
+    "LLDDDDDD": -2.0,
+    "LLDLLLDDDD": -2.5,
+    "LLDLDDDD": -2.5,
+    "LLDDLLLDDDD": -1.5
+  },
+  "two_digit_district_states": [
+    "GJ", "MH", "RJ", "MP", "KA", "TN", "UP", "HR", "PB", "AP", "TS", "TG", "KL", "WB", "BR", "OD", "CG", "JH", "UK", "HP", "AS"
+  ],
+  "to_digit": {"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8", "G": "6", "T": "7", "A": "4"},
+  "to_letter": {"0": "O", "1": "I", "2": "Z", "5": "S", "8": "B", "6": "G", "4": "A", "7": "T"},
+  "state_fix": {"WH": "MH", "NH": "MH", "0L": "DL", "0D": "OD", "HH": "MH", "6J": "GJ", "CJ": "GJ", "GU": "GJ"},
+  "one_digit_district_penalty": -5.0,
+  "code_prior_weight": 1.0,
+  "notes": {
+    "what": "The Indian plate-format tables plate_rules.py runs on. Editing this file changes what the worker and the AI service accept, correct and decode — no code change. Both copies (anpr_worker/ and ai_service/vms_face/services/) must stay byte-identical; tests/test_plate_rules.py checks it where both are visible.",
+    "loading": "plate_rules.load_formats(): $ANPR_PLATE_FORMATS, else this file beside plate_rules.py, else $ANPR_BYTETRACK_DIR/plate_formats.json (default /srv/app/anpr_worker — how the vms_face copy finds the worker's file), else the built-in plate_rules._DEFAULTS. A key left out keeps its built-in value; a file with a wrong shape is skipped whole with one warning.",
+    "state_codes": "Every state / UT registration code that may open a plate. Old and new codes both stay valid (OR/OD, UA/UK, TS/TG) — the old fleet is still on the road. TG: Telangana's registration series since 2024; before 2026-09-02 it was missing, so every TG plate was rejected as a fake state (a false rejection). TS kept for plates issued 2014-2024.",
+    "regexes": "The structural regexes (PLATE_RE, BH_RE) stay in plate_rules.py — the shape of an Indian plate is not configuration. The state-code check is separate from them, so adding a state here is all a new series needs.",
+    "templates": "Position templates per string length, most common first — correct_plate tries them in this order. L = letter slot, D = digit slot, B/H = the fixed Bharat-series literals. No 7-char template on purpose: it mostly legitimised OCR noise (seen live: KA54339).",
+    "template_prior": "Log-prior per plate SHAPE, added to the OCR log-prob by the constrained decoder in plate_ocr.py, so a rare shape that fits the raw glyphs (GJ0ZBP5367) no longer beats the common shape that needs one confusion fix (GJ02BP5367). LLDDLDDDD (the single-letter series: GJ32 K 6137) is -0.3, not -0.7, since 3 Sep 2026: that series is everyday traffic on Gujarat district cameras, and the milder prior measured never worse on 154 + 111 held-out crops (+1 exact).",
+    "two_digit_district_states": "States whose RTO codes are always two digits: a 1-digit-district template there is almost certainly a misread and gets one_digit_district_penalty in the decoder (-5 outweighs a 0.96-vs-0.01 glyph gap; the raw read survives as an alternative regardless).",
+    "to_digit_to_letter": "Position-aware OCR confusions: in a DIGIT slot an O becomes 0, in a LETTER slot a 0 becomes O. Validation never applies these — only correct_plate / validate_or_correct do.",
+    "state_fix": "Whole-state-code fixes for a misread first character (WH -> MH), tried before the templates.",
+    "code_prior_weight": "Weight of the per-camera registration-code prior (state+district histogram of confirmed plates on that camera) inside the constrained decode."
+  }
+}

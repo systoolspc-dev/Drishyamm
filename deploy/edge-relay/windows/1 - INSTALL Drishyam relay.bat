@@ -1,0 +1,12 @@
+@echo off
+title Drishyam relay - install
+cd /d "%~dp0"
+rem -- ask for administrator rights if we do not have them yet --
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0drishyam-site-relay.ps1" -Install
+echo.
+pause

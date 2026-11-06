@@ -1,0 +1,120 @@
+###############################################################################
+# Drishyam VMS — MediaMTX Configuration v2.0
+#
+# Media flow:
+#   IP Cameras ──RTSP──► MediaMTX ──WebRTC──► Browser (live, sub-500ms)
+#                                  ──HLS────► Browser (grid/mobile, ~2s)
+#                                  ──disk───► /recordings volume ──► S3
+#
+# Camera paths (cam_<monitorId>) are added dynamically via the REST API.
+###############################################################################
+
+logLevel: info
+logDestinations: [stdout]
+
+# ── REST API (Express backend manages camera paths via this) ──────────────────
+api: yes
+apiAddress: :9997
+
+# ── Prometheus metrics (scraped by observability stack on :9998) ──────────────
+metrics: yes
+metricsAddress: :9998
+
+# ── Auth: internal ────────────────────────────────────────────────────────────
+# - Backend (Express) uses Basic Auth: drishyam / drishyam123  (API only)
+# - Cameras (RTSP ingest) publish anonymously
+# - Browsers (HLS/WebRTC) read anonymously — streams are protected by JWT at Express layer
+authMethod: internal
+authInternalUsers:
+  - user: drishyam
+    pass: drishyam123
+    ips: []
+    permissions:
+      - action: api
+  - user: any
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: metrics      # /metrics endpoint scraped by Prometheus
+
+# ── RTSP ingest (MediaMTX pulls from cameras) ─────────────────────────────────
+rtsp: yes
+rtspAddress: :8554
+rtspEncryption: "no"
+# Force TCP for camera→MediaMTX. UDP is faster but loses packets on flaky
+# networks (the WAN/PoE links most IP cameras live on). TCP retransmits at
+# the network layer so we see "slow but complete" instead of "fast but
+# corrupted, half the frames unusable". The MediaMTX log warnings
+# "RTP packets lost / invalid FU-A packet (non-starting) / too many
+# reordered frames" all indicate that camera→MediaMTX is currently
+# preferring UDP. tcp-only forces every camera onto the reliable path.
+rtspTransports: [tcp]
+# Network buffer for RTSP reads. Default 2048 — bumping to 8192 absorbs
+# bursts of reordered packets that arrive together after a brief outage,
+# instead of discarding them. Costs ~6 MB of kernel buffer per stream.
+udpReadBufferSize: 8192
+
+# ── RTMP / SRT (disabled) ─────────────────────────────────────────────────────
+rtmp: no
+srt: no
+
+# ── HLS egress (LL-HLS via parts — smooth fallback / grid path) ──────────────
+# Tuned for smoothness over absolute lowest latency:
+#   * segments: 2s
+#   * parts:    1s — IMPORTANT: a part is only "independent" (a valid start /
+#     resync point) when it begins on a keyframe. With 200ms parts over a 1-2s
+#     GOP, only ~1 in 5-10 parts was independent, so first-frame and post-stall
+#     recovery had to wait for the next keyframe. Setting parts == keyframe
+#     interval (target 1s GOP, see the encoder/device GOP) makes EVERY part an
+#     independent start point → instant zap and clean resync. Per Dolby/OME
+#     LL-HLS guidance, part size should equal GOP size.
+#   * variant:  fmp4 — required for LL-HLS parts; legacy MPEG-TS doesn't support
+#                      partial-segment delivery.
+# WebRTC remains the sub-500ms single-view path; this HLS path is for grids and
+# WebRTC fallback, where smooth start/resync beats shaving a few hundred ms.
+# NOTE: full benefit requires the camera/transcoder GOP standardized to 1s so
+# part boundaries land on keyframes — see drisyam-stream-diagnosis memory.
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes
+hlsVariant: fmp4
+hlsSegmentDuration: 2s
+hlsPartDuration: 1s
+hlsSegmentMaxSize: 100M
+hlsAllowOrigins: ["*"]
+
+# ── WebRTC egress (sub-500ms — single-camera live view) ───────────────────────
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+webrtcAdditionalHosts: ["127.0.0.1", "localhost"]   # + HOST_IP from .env via MTX_WEBRTCADDITIONALHOSTS (docker-compose.yml)
+
+# ── Path defaults (recording disabled globally; enabled per-path via REST API) ─
+pathDefaults:
+  record: no
+  # rtspReadTimeout: how long MediaMTX waits for a single RTP packet before
+  # declaring the camera stalled. Default 10s is fine for healthy networks;
+  # raise to 30s when the camera→MediaMTX path has jitter, otherwise MediaMTX
+  # tears down the connection mid-stream and the orchestrator sees the gap.
+  sourceOnDemandStartTimeout: 30s
+  # Phase 1.3 (2026-05-28) — keep the RTSP source open for 5 minutes after the
+  # last viewer disconnects. Default is 10s, which means every operator-visible
+  # "first-click" on a camera pays the 3-6s source-on-demand cold start, even
+  # if someone was watching that camera 11 seconds earlier. Combined with
+  # streamRegistry's 30s subscriber-grace on the browser side, this gives
+  # ~5.5 min of "instantly available" after any viewer activity.
+  #
+  # Trade-off: cameras serve a continuous TCP-RTSP pull during this window
+  # even if nobody is watching. ~1-3 Mbps × keep-alive duration per camera;
+  # at 25 cameras × 5min that's about 4.5 GB of camera→MediaMTX traffic
+  # bought for the snappy-feel UX. Negligible at this scale; revisit at 2k
+  # cameras (will likely need a per-path override based on actual hit rate).
+  sourceOnDemandCloseAfter: 20s
+  # Disable transcoding/remuxing-to-RTSP — we serve HLS for browser, AI side
+  # consumes RTSP directly. Each transcoder pass = more CPU per stream.
+  # Already implicitly off; keep this comment so a future tuner doesn't enable.
+
+# ── Path defaults ─────────────────────────────────────────────────────────────
+paths:
+  all_others: {}

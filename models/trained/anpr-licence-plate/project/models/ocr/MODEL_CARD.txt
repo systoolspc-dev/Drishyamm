@@ -1,0 +1,3 @@
+fine-tuned cct-s-v2 on 5852 train / 26 val crops at Mon Oct  5 04:34:43 2026
+val exact-match 0.731 -> 0.769, char 0.969 -> 0.973
+run: /srv/anpr/data/train/ocr_runs/20261005-035629

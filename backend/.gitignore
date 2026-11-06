@@ -1,0 +1,24 @@
+node_modules/
+logs/
+.env
+dist/
+*.log
+.DS_Store
+
+# build artefacts + accidental NUL redirects
+nul
+nul_
+build.log
+
+# ad-hoc dev probes — if they're worth keeping, move them under scripts/dev-probes/
+/probe-*.js
+/test-put*.js
+/dbprobe.js
+/admin-probe.js
+
+# editor / OS junk
+Thumbs.db
+*.swp
+*~
+.vscode/settings.json
+.idea/

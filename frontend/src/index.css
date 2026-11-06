@@ -1,0 +1,1436 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * DRISHYAM DESIGN SYSTEM
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * One typography scale, one colour palette, one set of surfaces and borders.
+ * Every value the UI is allowed to use is declared here; pages compose them
+ * through Tailwind utilities and never restate a raw hex or an ad-hoc px size.
+ *
+ * Before this file existed the app carried 37 distinct font sizes (9px, 9.5px,
+ * 10px, 10.5px, 11px, 11.5px, 12px, 12.5px … all serving the same handful of
+ * roles), 144 raw hex colours, three different brand oranges and four
+ * competing "primary text" colours. Navigating between pages felt like
+ * changing products. The rule now:
+ *
+ *   A page picks a SEMANTIC LEVEL (`text-body`, `text-fg-muted`, `bg-brand`),
+ *   never a measurement (`text-[12.5px]`, `text-slate-500`, `bg-[#F7983A]`).
+ *
+ * Layout stays free. A map page still has a map, a wall still has a wall —
+ * consistency is in the design language, not the composition.
+ *
+ * ── Reading the colour names ──────────────────────────────────────────────
+ * Each semantic family has four members, and they always mean the same thing:
+ *
+ *   bg-success        solid fill      → dots, bars, filled buttons
+ *   text-success      the solid hue   → standalone icons on a plain surface
+ *   bg-success-soft   tint background → badges, banners, callouts
+ *   text-success-ink  readable text   → label ON the soft tint (WCAG AA)
+ *   border-success-line             → border around the soft tint
+ *
+ * So a status badge is ALWAYS, in every module:
+ *   bg-success-soft text-success-ink border-success-line
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* Bundled from @fontsource (imported in main.jsx), never a Google Fonts link:
+   * on-prem and air-gapped sites have no route to a CDN, and a hosted link
+   * would fall back to Segoe UI there — which is what every operator saw before
+   * the files were bundled. Inter + JetBrains Mono is the product pairing. */
+  --font-sans: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* ── Type scale ───────────────────────────────────────────────────────────
+   * Thirteen roles. Tuned to where this app actually lives: dense operator
+   * screens whose centre of gravity is 11–13px, not a marketing site's 16px.
+   * Body is 13px, and the near-duplicate twins that used to surround every
+   * step (12/12.5, 13/13.5, 10/10.5, 11/11.5) all collapse into one value.
+   *
+   * Line-height and tracking travel WITH the size — that is the whole point of
+   * a scale. Weight is included as the level's default and any `font-*`
+   * utility still overrides it, so `text-title font-extrabold` works.
+   *
+   * NOTE these names deliberately avoid `card`, `primary`, `muted`, `accent`
+   * and `border`: those already exist as COLOUR tokens below, and Tailwind
+   * would collide `text-card` (a size) with `text-card` (a colour). */
+
+  /* Hero numbers and the rare marketing-weight headline. */
+  --text-display: 32px;
+  --text-display--line-height: 38px;
+  --text-display--letter-spacing: -0.022em;
+  --text-display--font-weight: 700;
+
+  /* The one and only page title. Every page header, every module.
+     Same as `text-xl font-bold leading-tight tracking-tight` (Live Zone
+     Headcount), which most module pages spell out inline. */
+  --text-title: 20px;
+  --text-title--line-height: 25px;
+  --text-title--letter-spacing: -0.025em;
+  --text-title--font-weight: 700;
+
+  /* Section heading inside a page — "Recent Alerts", "Camera Health". */
+  --text-section: 18px;
+  --text-section--line-height: 24px;
+  --text-section--letter-spacing: -0.012em;
+  --text-section--font-weight: 600;
+
+  /* Card / panel heading. The most common heading in the product. */
+  --text-heading: 15px;
+  --text-heading--line-height: 20px;
+  --text-heading--letter-spacing: -0.006em;
+  --text-heading--font-weight: 600;
+
+  /* Default running text, table cells, list rows. */
+  --text-body: 13px;
+  --text-body--line-height: 18px;
+  --text-body--font-weight: 400;
+
+  /* Supporting text, secondary table columns, dense rows. */
+  --text-small: 12px;
+  --text-small--line-height: 16px;
+  --text-small--font-weight: 400;
+
+  /* Timestamps, metadata, helper text, sub-labels under a value. */
+  --text-caption: 11px;
+  --text-caption--line-height: 14px;
+  --text-caption--font-weight: 500;
+
+  /* Uppercase eyebrow labels — sidebar group headers, table overlines.
+   * Tracking is baked in because uppercase at 10px is unreadable without it. */
+  --text-micro: 10px;
+  --text-micro--line-height: 13px;
+  --text-micro--letter-spacing: 0.08em;
+  --text-micro--font-weight: 600;
+
+  /* The label ABOVE a metric value — KPI card titles, stat-tile captions.
+   * One step above --text-body and semi-bold, so the card announces what it
+   * is measuring before the eye falls to the number. Distinct from
+   * --text-heading (a panel's title) and --text-control (a button's). */
+  --text-label: 14px;
+  --text-label--line-height: 20px;
+  --text-label--letter-spacing: -0.005em;
+  --text-label--font-weight: 600;
+
+  /* Navigation rows. Held at 14px — nav is a touch target, not body copy. */
+  --text-nav: 14px;
+  --text-nav--line-height: 20px;
+  --text-nav--letter-spacing: -0.005em;
+  --text-nav--font-weight: 500;
+
+  /* Top-level sidebar rows. One step above --text-nav so the rail reads at a
+   * glance from across a control room; child rows use --text-nav beneath it. */
+  --text-nav-lg: 15px;
+  --text-nav-lg--line-height: 20px;
+  --text-nav-lg--letter-spacing: -0.01em;
+  --text-nav-lg--font-weight: 600;
+
+  /* Buttons, inputs, selects. One size for every control in the product.
+   * Deliberately carries NO default weight — a button is 600 and the input
+   * next to it is 400, and both are correct. The primitives in core/ui/ set
+   * the weight for their own role. */
+  --text-control: 14px;
+  --text-control--line-height: 20px;
+  --text-control--letter-spacing: -0.005em;
+
+  /* KPI / metric values. Three steps: headline for a dashboard's top row,
+   * standard, and compact for dense grids. */
+  --text-metric-lg: 28px;
+  --text-metric-lg--line-height: 32px;
+  --text-metric-lg--letter-spacing: -0.02em;
+  --text-metric-lg--font-weight: 700;
+
+  --text-metric: 24px;
+  --text-metric--line-height: 28px;
+  --text-metric--letter-spacing: -0.02em;
+  --text-metric--font-weight: 700;
+
+  --text-metric-sm: 20px;
+  --text-metric-sm--line-height: 24px;
+  --text-metric-sm--letter-spacing: -0.018em;
+  --text-metric-sm--font-weight: 700;
+}
+
+/* ── Raw palette ────────────────────────────────────────────────────────────
+ * The only place a hex literal is allowed to appear. Everything else in the
+ * application refers to these by name. Values were chosen to match what the
+ * app already used most often, so migrating snapped near-duplicates together
+ * rather than restyling the product. */
+:root {
+  --radius: 0.5rem;
+  /* Global navbar height. Full-height pages size themselves against this. */
+  --topbar-h: 4rem;
+
+  /* ── The page gutter ──────────────────────────────────────────────────────
+   * The space between the sidebar rail and a page's content, and the same
+   * value on the right. ONE definition for the whole product: the Tailwind
+   * pages read it through the `page-inset` utility below, the AI-analytics
+   * scope and the admin shell read the custom property directly.
+   *
+   * It exists because the value had drifted per page — Operations pages sat at
+   * 32px, the vertical dashboards at a flat 16px behind a centred 1500px cap
+   * (which pushed the content edge out to ~90px on a 1920 screen), Settings at
+   * 20px, Feature Demos at 20px, Attendance Report at 24px. Navigating between
+   * them made the content edge jump. Change these two values and every page
+   * follows; do not restate a page inset at a call site. */
+  --page-inset-x: 1rem;     /* 16px — phones */
+  --page-inset-y: 1.25rem;  /* 20px — same at every width */
+}
+
+/* Kept outside the block above only because a media query cannot live inside
+ * a rule. Same breakpoints Tailwind uses for `sm:` and `lg:`, so the gutter
+ * steps with the rest of the responsive scale. */
+@media (width >= 40rem) { :root { --page-inset-x: 1.5rem; } }  /* sm — 24px */
+@media (width >= 64rem) { :root { --page-inset-x: 2rem;   } }  /* lg — 32px */
+
+/* ── App scale ───────────────────────────────────────────────────────────────
+ * The whole UI renders at 90% on laptop/desktop widths, the same look as the
+ * browser zoomed to 90%. Change --app-zoom to retune; 1 turns it off.
+ *
+ * Applied to <html>, not an app wrapper, so everything Radix portals to
+ * <body> (dialogs, dropdowns, tooltips, the nav drawer) scales with the page.
+ * `zoom` rather than `transform: scale()`: zoom re-flows layout, so fixed and
+ * sticky positioning, hit-testing and popover placement keep working, and no
+ * width/height over-compensation is needed. Every current engine supports it
+ * (Chromium, Safari, Firefox 126+).
+ *
+ * Phones and tablets stay at 100%: they have no browser-zoom convention, and
+ * scaling would shrink the 44px touch targets below the guideline.
+ *
+ * VIEWPORT UNITS. Unlike real browser zoom, CSS zoom shrinks vh / vw with
+ * everything else — `100vh` inside a 0.9-zoomed page covers 90% of the
+ * screen. So layout never uses raw viewport units: it uses these variables,
+ * which undo the zoom (100vh / 0.9 × 0.9 = the full screen). `--app-vunit-fix`
+ * defaults to 1 / zoom and is re-measured at runtime (src/main.jsx) in case an
+ * engine does not shrink viewport units under zoom. */
+:root {
+  --app-zoom: 1;
+  --app-vunit-fix: calc(1 / var(--app-zoom));
+  --app-vh:  calc(100vh  * var(--app-vunit-fix));
+  --app-dvh: calc(100dvh * var(--app-vunit-fix));
+  --app-svh: calc(100svh * var(--app-vunit-fix));
+  --app-lvh: calc(100lvh * var(--app-vunit-fix));
+  --app-vw:  calc(100vw  * var(--app-vunit-fix));
+}
+@media screen and (width >= 64rem) { :root { --app-zoom: 0.9; } }
+html { zoom: var(--app-zoom); }
+
+/* FLOATING LAYERS. Radix places popovers, tooltips, dropdowns and selects with
+ * Floating UI, which measures in on-screen pixels (getBoundingClientRect) but
+ * writes its `transform: translate()` into a zoomed element, where CSS lengths
+ * are scaled again — every floating layer landed at 90% of its true offset,
+ * drifting up-left of its trigger. The wrapper Floating UI positions is
+ * counter-zoomed back to 1 so its translate lands exactly; its content re-applies
+ * the app zoom so it still renders at the same 90% as the page. */
+[data-radix-popper-content-wrapper] { zoom: calc(1 / var(--app-zoom)); }
+[data-radix-popper-content-wrapper] > * { zoom: var(--app-zoom); }
+
+:root {
+
+  /* Declares which palette the browser should paint the parts CSS cannot
+   * reach: scrollbars, the resize grip, and the default control chrome. Set
+   * per theme (the dark value is in the `.dark` block) because otherwise every
+   * scrolling panel in dark mode gets a light grey scrollbar painted down its
+   * edge -- the one piece of the page that never followed the theme. The
+   * per-input `color-scheme` rules on date/time fields further down still win
+   * where they apply; this is the floor beneath them. */
+  color-scheme: light;
+
+  /* Brand — Drishyam orange. Primary actions, active nav, selection, focus.
+   * NOT a warning colour: warning is amber, below. In a security product the
+   * operator has to be able to tell "the button" from "something is wrong". */
+  --brand:        #F7983A;
+  --brand-hover:  #E4872D;   /* was also spelled #e8882b / #e8882a / #d67820 */
+  --brand-active: #C9741F;
+  --brand-soft:   #FEF3E7;   /* 12% brand on white — selected rows, tints     */
+  --brand-line:   #FDE0C4;   /* 30% brand on white — border around the tint   */
+  --brand-ink:    #B96A15;   /* brand-coloured TEXT on light — 4.6:1 on white */
+
+  /* Text. Four steps plus disabled. Never pure black. */
+  --text-primary:   #0F172A;  /* titles, headings, values, primary nav        */
+  --text-secondary: #475569;  /* descriptions, supporting information         */
+  --text-muted:     #64748B;  /* labels, secondary metadata                   */
+  --text-subtle:    #94A3B8;  /* timestamps, placeholders, helper text        */
+  --text-disabled:  #CBD5E1;
+  --text-inverse:   #FFFFFF;
+
+  /* Surfaces. Five, and no page invents a sixth. */
+  --surface-app:      #F6F7FA;  /* the page behind the cards                  */
+  --surface:          #FFFFFF;  /* cards, panels, modals, table bodies        */
+  --surface-sunken:   #F8FAFC;  /* table headers, inset wells, hover rows     */
+  --surface-muted:    #F1F5F9;  /* secondary chips, disabled fields           */
+  --surface-selected: var(--brand-soft);
+
+  /* Borders. Most things use --line. Focus uses the brand. */
+  --line:        #E2E8F0;
+  --line-subtle: #F1F5F9;
+  --line-strong: #CBD5E1;
+  --line-focus:  var(--brand);
+
+
+  /* Tooltips / info popovers. Deliberately literal rather than aliases of
+   * --surface and --brand-ink: those flip with the theme, and a tooltip is
+   * meant to read as a scrap of paper laid on top of the UI — the same one in
+   * both themes, including over the always-dark sidebar rail. Because nothing
+   * here references a flipping token, the `.dark` block leaves it alone and
+   * these stay light on purpose.
+   *
+   * `ink` is the one text colour for every tooltip, short label or full
+   * sentence alike — 4.6:1 on the paper, so it clears AA for body text. */
+  --tooltip-bg:     #F8FAFC;
+  --tooltip-line:   #FDE0C4;
+  --tooltip-ink:    #B96A15;
+  --tooltip-shadow: 0 8px 24px -8px rgba(15, 23, 42, 0.25);
+  --tooltip-glow:   rgba(247, 152, 58, 0.45);
+
+  /* Toasts. Like tooltips these are literal on purpose: a toast is the same
+   * dark card in both themes — the product identity (near-black + orange)
+   * laid over whatever page is underneath, and the one surface that must
+   * read from across a control room regardless of theme. Nothing here
+   * references a flipping token, so the `.dark` block leaves it alone.
+   *
+   * Inks are graded for the dark ground: ink 15:1, muted 7:1, subtle 5.4:1.
+   * Severity on a toast uses the SOLID status hues (text-danger, text-warning)
+   * — the -ink variants are tuned for light tints and go muddy on black. */
+  --toast-bg:         rgba(28, 28, 33, 0.97);
+  --toast-line:       rgba(255, 255, 255, 0.09);
+  --toast-raised:     rgba(255, 255, 255, 0.07);
+  --toast-ink:        #F4F4F5;
+  --toast-ink-muted:  #A1A1AA;
+  --toast-ink-subtle: #8B8B94;
+  --toast-shadow:     0 24px 48px -16px rgba(0, 0, 0, 0.6), 0 8px 20px -8px rgba(0, 0, 0, 0.35);
+
+  /* Masks for the native date/time picker buttons. Stroked lucide glyphs, so
+   * they match the icon set the rest of the app draws with. Colour comes from
+   * `background-color` on the pseudo-element, not from the SVG. */
+  --picker-icon-calendar: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3C/svg%3E");
+  --picker-icon-clock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3.5 2'/%3E%3C/svg%3E");
+
+  /* ── Status ───────────────────────────────────────────────────────────────
+   * Colour carries meaning here; it is not decoration. Each family is one
+   * hue only — the app previously ran emerald AND green, rose AND red,
+   * amber AND orange, sky AND blue for the same states. */
+
+  /* Healthy · online · live · success · operational */
+  --success:      #10B981;
+  --success-soft: #ECFDF5;
+  --success-ink:  #047857;
+  --success-line: #A7F3D0;
+
+  /* Caution · degraded · needs attention · pending */
+  --warning:      #F59E0B;
+  --warning-soft: #FFFBEB;
+  --warning-ink:  #B45309;
+  --warning-line: #FDE68A;
+
+  /* Alert · critical · offline-with-impact · destructive */
+  --danger:      #EF4444;
+  --danger-soft: #FEF2F2;
+  --danger-ink:  #B91C1C;
+  --danger-line: #FECACA;
+
+  /* Informational · camera & system facts · secondary actions */
+  --info:      #0EA5E9;
+  --info-soft: #F0F9FF;
+  --info-ink:  #0369A1;
+  --info-line: #BAE6FD;
+
+  /* AI / analytics categories. Used sparingly, on purpose. */
+  --ai:      #8B5CF6;
+  --ai-soft: #F5F3FF;
+  --ai-ink:  #6D28D9;
+  --ai-line: #DDD6FE;
+
+  /* Neutral · inactive · unknown · disabled */
+  --neutral:      #94A3B8;
+  --neutral-soft: #F1F5F9;
+  --neutral-ink:  #475569;
+  --neutral-line: #E2E8F0;
+
+  /* ── shadcn compatibility ──────────────────────────────────────────────────
+   * The primitives in core/ui/ are stock shadcn and address colours by these
+   * names. They are ALIASES, not a second palette — changing --brand above
+   * changes every button in the product. */
+  /* --background is the app CANVAS (the page behind the cards) — deliberately
+   * --surface-app, not --surface, so a card always has a darker page to sit
+   * on. The rail is its own step above the canvas in dark mode; see the
+   * surface ladder in the `.dark` block below for the whole ordering. */
+  --background: var(--surface-app);
+  --foreground: var(--text-primary);
+  --card: var(--surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--brand);
+  /* Text ON a solid brand fill. Literal white, NOT --text-inverse: that token
+   * flips to near-black in `.dark`, which turned every `bg-primary
+   * text-primary-foreground` button into dark-on-orange while the Button
+   * primitive (`bg-brand text-white`) stayed white-on-orange. The orange does
+   * not change between themes, so neither does the ink on it. */
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--surface-muted);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-muted);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--surface-muted);
+  --accent-foreground: var(--text-primary);
+  --destructive: var(--danger);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--brand);
+
+  /* Data visualisation. Ordered so the first series is the brand and the rest
+   * stay distinguishable; these are the ONLY colours charts may cycle. */
+  --chart-1: var(--brand);
+  --chart-2: var(--info);
+  --chart-3: var(--success);
+  --chart-4: var(--ai);
+  --chart-5: #EC4899;
+
+  /* Sidebar. White, matching the cards rather than cutting a dark rail out of a
+   * light page. The Sidebar component used to hard-code text-white and
+   * white/alpha hovers, which only worked on a dark rail; it now reads these
+   * tokens, so the rail follows the theme in both directions. */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  /* Hover fill for a nav row. NOT --surface-muted: against a white rail that
+   * is a 3% step, so hovering read as nothing happening. This is the next rung
+   * down, which the row can actually be seen to sit on. The dark rail is a
+   * near-black ground where --surface-muted IS the visible step, so `.dark`
+   * restates this. */
+  --sidebar-accent: #EBF0F6;                     /* hover row fill             */
+  --sidebar-accent-foreground: var(--text-primary);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--brand);
+  /* Idle nav row text. Was a fixed #A1A1AA, chosen when the rail was dark —
+   * on white that is 2.6:1 and fails AA outright. --text-secondary is the
+   * step the rest of the app uses for supporting text and follows the theme,
+   * so the rail is legible on both grounds (7.6:1 light, 13.7:1 dark) while
+   * still sitting a clear step below an active row's --sidebar-foreground. */
+  --sidebar-muted: var(--text-secondary);
+  /* One step above the rail — the user card at its foot. A white-alpha tint
+   * is invisible on a white rail, so light mode takes the sunken surface and
+   * `.dark` keeps the alpha lift. */
+  --sidebar-raised: var(--surface-sunken);
+
+  /* Utilisation heatmap ramp, 0 -> full. Light mode runs pale-cream to burnt
+   * orange, which only works because the page behind it is white. */
+  --heat-0: #F8FAFC;
+  --heat-1: #FDEFDF;
+  --heat-2: #FBD8B2;
+  --heat-3: #F7B678;
+  --heat-4: #EF963C;
+  --heat-5: #C9761C;
+}
+
+/* ── Drishyam icon styles ───────────────────────────────────────────────────
+ * The nav icons in core/icons/NavIcons.jsx draw a tint layer and an accent
+ * layer; these two variables decide how they look. Custom properties rather
+ * than `[data-icons] .di-accent` rules so the nearest ancestor wins: a subtree
+ * can show "line" inside a page that is showing "duotone". The sidebar shows
+ * the stock lucide glyphs unless <html> carries `data-icons` (DEFAULT_ICON_SET
+ * in core/hooks/useIconSet.js is 'lucide'), so no :root default is needed.
+ *
+ * `--di-accent: currentColor` is left unresolved on purpose: an unregistered
+ * custom property keeps the keyword, so it resolves on the accent itself and
+ * follows the row's idle / hover / active colour. Accent shapes opt out of
+ * fill or stroke with a presentation attribute, which beats the inherited
+ * value set here. */
+[data-icons="duotone"] {
+  --di-tint: 0.16;
+  --di-accent: var(--brand);
+}
+[data-icons="line"] {
+  --di-tint: 0;
+  --di-accent: currentColor;
+}
+.di-tint   { fill: currentColor; fill-opacity: var(--di-tint); }
+.di-accent { fill: var(--di-accent); stroke: var(--di-accent); }
+
+/* Dark theme. The Topbar toggle writes `.dark` on <html>. Only the raw palette
+ * is restated — every alias above follows automatically, so a component that
+ * uses the semantic utilities (text-fg*, bg-surface*, border-line*, the status
+ * families) is themed for free. Raw palette classes (text-slate-900, bg-white)
+ * and inline hex colours are what break dark mode; use a token instead, or pair
+ * the raw class with an explicit `dark:` counterpart when a token cannot fit. */
+.dark {
+  color-scheme: dark;
+  --text-primary:   #F1F5F9;
+  --text-secondary: #CBD5E1;
+  --text-muted:     #94A3B8;
+  --text-subtle:    #71717A;
+  --text-disabled:  #52525B;
+  --text-inverse:   #0F172A;
+
+  /* Near-black ground with the elevation ladder kept intact. Deepening only
+   * the page would have flattened the steps above it; each rung moves with it
+   * so a card still reads as sitting above the page rather than painted on it.
+   *
+   * The ground is #050507 rather than #000: pure black leaves nothing for a
+   * shadow to fall on, so panels lose their lift, and it is what makes an
+   * OLED screen smear on scroll. A few points off black keeps both.
+   *
+   * The gap between app and surface widens from 13 to 13 points of lightness
+   * on a darker base, which is what makes the frosted panels read as glass —
+   * a blurred translucent surface needs the thing behind it to be darker than
+   * it is, or there is nothing for the blur to show. */
+  --surface-app:    #050507;
+  --surface:        #121215;
+  --surface-sunken: #17171A;
+  --surface-muted:  #202024;
+
+  --line:        rgba(255, 255, 255, 0.08);
+  --line-subtle: rgba(255, 255, 255, 0.05);
+  --line-strong: rgba(255, 255, 255, 0.14);
+
+  /* Tooltips in dark mode. Not the light paper inverted, and not pitch black:
+   * an elevated surface one step above the panel behind it, carrying a brand
+   * -tinted edge and a faint brand glow so it still reads as ours.
+   *
+   * The greys are the same zinc family as --surface-muted rather than slate —
+   * slate is blue-leaning and would sit visibly cool against the rest of the
+   * dark palette. Translucency plus the blur on the element keeps whatever is
+   * behind it faintly present, which is what stops it looking like a hole. */
+  --tooltip-bg:     rgba(39, 39, 42, 0.95);
+  --tooltip-line:   rgba(247, 152, 58, 0.30);
+  --tooltip-ink:    #F7983A;
+  --tooltip-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(247, 152, 58, 0.05);
+  --tooltip-glow:   rgba(247, 152, 58, 0.55);
+
+  /* The canvas comment above states the rail and the page are the same dark
+   * surface. That was two hexes that happened to agree; this makes it a rule,
+   * so retuning --surface-app carries the rail with it. */
+  --sidebar: var(--surface-app);
+  /* On the near-black rail the neutral surface step is the visible one, and a
+   * white-alpha tint is what lifts the user card. Both are inverted from the
+   * light values above. */
+  --sidebar-accent: var(--surface-muted);
+  --sidebar-raised: rgba(255, 255, 255, 0.04);
+
+  /* The ramp has to be rebuilt for dark, not merely reused: on a near-black
+   * page the pale end of the light ramp is the BRIGHTEST thing on screen, so
+   * an empty hour shouts louder than a full one. Here it climbs from barely
+   * above the panel to full brand, so weight still reads as "more". */
+  --heat-0: rgba(255, 255, 255, 0.035);
+  --heat-1: rgba(247, 152, 58, 0.14);
+  --heat-2: rgba(247, 152, 58, 0.28);
+  --heat-3: rgba(247, 152, 58, 0.46);
+  --heat-4: rgba(247, 152, 58, 0.68);
+  --heat-5: #F7983A;
+
+  --brand-soft: rgba(247, 152, 58, 0.14);
+  --brand-line: rgba(247, 152, 58, 0.30);
+  --brand-ink:  #F7983A;
+
+  --success-soft: rgba(16, 185, 129, 0.15);
+  --success-ink:  #4ADE80;
+  --success-line: rgba(16, 185, 129, 0.30);
+  --warning-soft: rgba(245, 158, 11, 0.15);
+  --warning-ink:  #FBBF24;
+  --warning-line: rgba(245, 158, 11, 0.30);
+  --danger-soft:  rgba(239, 68, 68, 0.15);
+  --danger-ink:   #F87171;
+  --danger-line:  rgba(239, 68, 68, 0.30);
+  --info-soft:    rgba(14, 165, 233, 0.15);
+  --info-ink:     #38BDF8;
+  --info-line:    rgba(14, 165, 233, 0.30);
+  --ai-soft:      rgba(139, 92, 246, 0.15);
+  --ai-ink:       #A78BFA;
+  --ai-line:      rgba(139, 92, 246, 0.30);
+
+  --neutral:      #7A8390;
+  --neutral-soft: rgba(255, 255, 255, 0.06);
+  --neutral-ink:  #98A1B1;
+  --neutral-line: rgba(255, 255, 255, 0.10);
+}
+
+/* Dropdowns in dark mode: a gradient panel instead of a flat fill, so a menu
+ * reads as a raised layer over the card it opened from. Built from the
+ * surface ladder above (muted → sunken → surface) plus a faint brand tint on
+ * the hovered / selected row. Only the background changes — layout, spacing,
+ * borders and behaviour are the components' own. */
+.dark :is(
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="command"]
+) {
+  background-color: var(--surface);
+  background-image: linear-gradient(160deg, var(--surface-muted) 0%, var(--surface-sunken) 45%, var(--surface) 100%);
+}
+/* Hovered / keyboard-highlighted dropdown row, both themes: a soft peach wash
+ * on light, a muted violet-charcoal on dark. One variable per theme, so the
+ * rule below stays theme-agnostic. `data-highlighted` is how Radix marks the
+ * row under the pointer AND the one reached with the arrow keys, so keyboard
+ * users get the same cue as mouse users. */
+:root {
+  --dropdown-hover-gradient: linear-gradient(135deg, rgba(255, 235, 204, 0.8), rgba(255, 209, 179, 0.9));
+}
+.dark {
+  --dropdown-hover-gradient: linear-gradient(135deg, rgba(50, 45, 60, 0.9), rgba(30, 25, 40, 0.95));
+}
+:is(
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-checkbox-item"],
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-sub-trigger"],
+  [data-slot="select-item"],
+  [data-slot="command-item"]
+) {
+  transition: background 0.3s ease, color 0.3s ease;
+}
+:is(
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-checkbox-item"],
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-sub-trigger"],
+  [data-slot="select-item"],
+  [data-slot="command-item"]
+):is(:hover, [data-highlighted], [data-selected="true"], [data-state="open"]):not([data-disabled]) {
+  background-color: transparent;
+  background-image: var(--dropdown-hover-gradient);
+}
+
+/* ── Tailwind utility generation ────────────────────────────────────────────
+ * Everything above becomes a utility here. `@theme inline` keeps the
+ * var() reference intact so `.dark` (and any future theme) still applies. */
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Text — text-fg, text-fg-secondary, text-fg-muted, text-fg-subtle … */
+  --color-fg:           var(--text-primary);
+  --color-fg-secondary: var(--text-secondary);
+  --color-fg-muted:     var(--text-muted);
+  --color-fg-subtle:    var(--text-subtle);
+  --color-fg-disabled:  var(--text-disabled);
+  --color-fg-inverse:   var(--text-inverse);
+
+  /* Surfaces — bg-surface, bg-surface-app, bg-surface-sunken … */
+  --color-surface:          var(--surface);
+  --color-surface-app:      var(--surface-app);
+  --color-surface-sunken:   var(--surface-sunken);
+  --color-surface-muted:    var(--surface-muted);
+  --color-surface-selected: var(--surface-selected);
+
+  /* Tooltips — bg-tooltip, text-tooltip-ink, border-tooltip-line … */
+  --color-tooltip:      var(--tooltip-bg);
+  --color-tooltip-line: var(--tooltip-line);
+  --color-tooltip-ink:  var(--tooltip-ink);
+
+  /* Toasts — bg-toast, border-toast-line, bg-toast-raised, text-toast-ink … */
+  --color-toast:            var(--toast-bg);
+  --color-toast-line:       var(--toast-line);
+  --color-toast-raised:     var(--toast-raised);
+  --color-toast-ink:        var(--toast-ink);
+  --color-toast-ink-muted:  var(--toast-ink-muted);
+  --color-toast-ink-subtle: var(--toast-ink-subtle);
+
+  /* Borders — border-line, border-line-subtle, border-line-strong … */
+  --color-line:        var(--line);
+  --color-line-subtle: var(--line-subtle);
+  --color-line-strong: var(--line-strong);
+  --color-line-focus:  var(--line-focus);
+
+  /* Brand */
+  --color-brand:        var(--brand);
+  --color-brand-hover:  var(--brand-hover);
+  --color-brand-active: var(--brand-active);
+  --color-brand-soft:   var(--brand-soft);
+  --color-brand-line:   var(--brand-line);
+  --color-brand-ink:    var(--brand-ink);
+
+  /* Status */
+  --color-success:      var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-ink:  var(--success-ink);
+  --color-success-line: var(--success-line);
+
+  --color-warning:      var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-ink:  var(--warning-ink);
+  --color-warning-line: var(--warning-line);
+
+  --color-danger:      var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-ink:  var(--danger-ink);
+  --color-danger-line: var(--danger-line);
+
+  --color-info:      var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-ink:  var(--info-ink);
+  --color-info-line: var(--info-line);
+
+  --color-ai:      var(--ai);
+  --color-ai-soft: var(--ai-soft);
+  --color-ai-ink:  var(--ai-ink);
+  --color-ai-line: var(--ai-line);
+
+  --color-neutral:      var(--neutral);
+  --color-neutral-soft: var(--neutral-soft);
+  --color-neutral-ink:  var(--neutral-ink);
+  --color-neutral-line: var(--neutral-line);
+
+  /* shadcn primitives */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-raised: var(--sidebar-raised);
+}
+
+/* ── page-inset ─────────────────────────────────────────────────────────────
+ * The one gutter utility. A full-page surface wears `page-inset` and inherits
+ * the product-wide content edge (--page-inset-x, declared near the top of this
+ * file); a page that needs the horizontal edge without the vertical rhythm —
+ * one that scrolls its own body, say — wears `page-inset-x`.
+ *
+ * Use these instead of spelling out `px-4 sm:px-6 lg:px-8`. The literal form
+ * works, but it is a value restated at a call site, and restated values are
+ * what let the page insets drift apart in the first place. */
+@utility page-inset {
+  padding-inline: var(--page-inset-x);
+  padding-block: var(--page-inset-y);
+}
+
+@utility page-inset-x {
+  padding-inline: var(--page-inset-x);
+}
+
+/* ── scrollbar-thin ─────────────────────────────────────────────────────────
+ * A quiet 6px scrollbar for panels that scroll inside the page (data tables,
+ * lists): transparent track, rounded thumb, and no arrow buttons — Windows
+ * draws those by default, and on a table they read as extra controls.
+ *
+ * Chromium/Safari get the ::-webkit-scrollbar rules. The standard properties
+ * are applied only where those are unsupported (Firefox), because from
+ * Chromium 121 setting `scrollbar-width` switches the webkit rules off. */
+@utility scrollbar-thin {
+  &::-webkit-scrollbar { width: 6px; height: 6px; }
+  &::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  &::-webkit-scrollbar-track { background: transparent; }
+  &::-webkit-scrollbar-corner { background: transparent; }
+  &::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 9999px; }
+  &:hover::-webkit-scrollbar-thumb { background: var(--text-subtle); }
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
+
+/* The inverse: cancels the page gutter so a band inside a page — the sticky
+ * Quick Actions footer on the vertical dashboards — can run its border and
+ * its background to the full content width, then re-apply `page-inset-x` to
+ * put its own contents back on the page's content edge. Paired with the
+ * utility above it stays correct at every breakpoint; the `-mx-4` it replaced
+ * only ever matched the 16px phone gutter. */
+@utility page-bleed {
+  margin-inline: calc(var(--page-inset-x) * -1);
+}
+
+/* ── settings-shell ─────────────────────────────────────────────────────────
+ * Worn by the Settings page's content container (core/pages/Settings.jsx).
+ *
+ * From `lg` that container is a two-pane grid — a fixed 296px nav rail beside
+ * the section — and each pane scrolls itself inside the Operations frame.
+ * Below `lg` it collapses to ONE scrolling column, and that is where the cards
+ * used to break, for a reason that is worth writing down because it is not
+ * obvious from the markup.
+ *
+ * Every card in Settings is laid out by a grid or a flex row, and a grid/flex
+ * item's automatic minimum size is `min-content`, not zero. So an unbroken
+ * email, a long camera name or a `tabular-nums` figure sets a floor WIDER than
+ * a phone: the track grows past 100%, the card grows with it, and its
+ * right-hand padding is carried off-screen. With the column above clipping its
+ * overflow, that reads as a card with its padding cut off rather than as
+ * something to scroll — the reported symptom. Zeroing the floor lets the track
+ * shrink back to the card, and the text wraps instead.
+ *
+ * `box-sizing` is already `border-box` from Preflight. It is restated because
+ * the guarantee here — a card is never wider than the column holding it —
+ * holds only while padding is inside the width, and these sections mount
+ * markup ported from elsewhere (Manage Users, Alert Recipients) that does not
+ * inherit this file's conventions.
+ *
+ * The min-content release is NOT breakpoint-scoped. It used to stop at `lg`,
+ * on the reasoning that the panes have room up there and that clamping would
+ * fight the fixed 296px rail. Both halves were wrong. The rail is no longer a
+ * fixed track (`minmax(0,296px)` in Settings.jsx), so there is nothing to
+ * fight; and the section pane is at its NARROWEST just past 1024px — 296px of
+ * rail plus a 32px gutter out of a 1024px window leaves it under 660px, which
+ * is less than the stacked single column gets on a tablet. So the same floors
+ * that clipped cards on a phone clipped them again in the first ~300px above
+ * `lg`. The rule now holds at every width: no descendant of this shell sets a
+ * horizontal floor, so a card is always free to shrink to its track.
+ *
+ * The width clamp stays split. `max-width` applies everywhere, because a card
+ * wider than its track is always a bug. `width: 100%` only below `lg`, where
+ * the shell is one column and a card should fill it; from `lg` the grid sizes
+ * the panes and the cards inside them keep their own intrinsic widths. */
+@utility settings-shell {
+  /* The shell itself is fluid — it takes the width it is given and never
+   * reserves more. Stated here rather than on the element so the guarantee
+   * travels with the utility. */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+
+  & > *,
+  & section,
+  & article,
+  & aside,
+  & main {
+    box-sizing: border-box;
+    max-width: 100%;
+  }
+
+  /* Harmless where it does not apply: outside a grid/flex container
+   * `min-width: auto` already resolves to 0, so this only releases the
+   * min-content floor described above. */
+  & * {
+    min-width: 0;
+  }
+
+  @media (width < 64rem) {
+    & > *,
+    & section,
+    & article,
+    & aside,
+    & main {
+      width: 100%;
+    }
+  }
+}
+
+/* ── Fluid Settings layout ───────────────────────────────────────────────────
+ * The grid and type primitives the Settings console and its subpages are laid
+ * out with. `settings-shell` above guarantees nothing OVERFLOWS; these decide
+ * how the content REFLOWS on the way down from a desktop to a phone.
+ *
+ * Why utilities rather than `md:grid-cols-2 xl:grid-cols-4` on each section:
+ * every grid in here lives inside the section pane, and the pane is not the
+ * viewport. At 1024px the pane is under 660px wide (296px rail + gutters), so
+ * a viewport breakpoint fires while the pane is still narrow — `xl:grid-cols-2`
+ * split a 660px pane into two 320px panels of toggle rows, and `md:grid-cols-2`
+ * did the same to a tablet. The card grids below size themselves from the track
+ * they are in and never consult the viewport at all; the two asymmetric splits,
+ * which cannot be expressed as auto-fit, ask the PANE's width instead of the
+ * window's (`settings-pane`).
+ *
+ * Each floor is wrapped in `min(100%, …)`. A bare `minmax(260px, 1fr)` is a
+ * 260px floor even in a 240px track, which is the classic auto-fit overflow —
+ * on a 320px phone with the page's own gutters that is exactly the card whose
+ * padding looked cut off. `min(100%, 260px)` yields to the track. */
+
+/* The section pane declares itself a container so the splits below can ask how
+ * wide IT is. Inline-size only: the pane's height comes from the Operations
+ * frame and must stay free to depend on its content. */
+@utility settings-pane {
+  container: settings-pane / inline-size;
+}
+
+/* Summary cards. 4-up on a wide pane, 2-up on a tablet, stacked on a phone,
+ * with no breakpoint deciding where those happen.
+ *
+ * The floor is 200px rather than the 260px this grid was specified with, and
+ * the arithmetic is the reason. The pane is not the window: on a 1280px laptop
+ * the window gives the shell 1232px, the rail takes 296px and the gap 20px,
+ * and the section's own 24px padding leaves 868px for the cards. Four 260px
+ * tracks plus three 16px gaps need 1088px, so a 260px floor drops the fourth
+ * card onto a row of its own at exactly the width where the stepped layout it
+ * replaces (`xl:grid-cols-4`) fitted all four. 200px is the largest floor that
+ * still fits four across a 1280px laptop — the same 205px cards that shipped —
+ * and the tracks are `1fr`, so every width above that spends the slack on
+ * wider cards rather than on a ragged tail. */
+@utility settings-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr));
+}
+
+/* Panels of labelled rows — feature toggles, access policy, retention, account
+ * details. The one grid here that is NOT auto-fit, and deliberately so: each
+ * row carries a label, a note and a switch on one line, so the question is not
+ * "how many tracks fit" but "is there room for a second column at all". Two-up
+ * is the widest this content ever wants, and auto-fit cannot be told that — on
+ * a 1920px screen it would open a third track and leave the two panels at
+ * 490px beside an empty one.
+ *
+ * 52rem of PANE (so ~832px, which a 1280px laptop clears at 916px) is where the
+ * second column starts paying for itself: two 384px panels, against the 426px
+ * the `xl:grid-cols-2` step used to give at the same window width. Below that
+ * they stack, including the ~660px pane a 1024px window leaves — which is the
+ * case the viewport breakpoint got wrong in the other direction. */
+@utility settings-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+
+  @container settings-pane (width >= 52rem) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Dense metric strips. A 152px floor keeps the two-up phone row the KPI strip
+ * and the report metrics already had — stacking a five-tile strip into five
+ * full-width rows is a worse phone layout, not a more responsive one. */
+@utility settings-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
+}
+
+/* Paired form fields, choice chips, and compact card grids such as the custom
+ * roles list. Narrow floor because these also run inside dialogs, which are not
+ * panes — auto-fit needs no container, so the same utility works in both
+ * places, where a `sm:` breakpoint inside a dialog was measuring the wrong box. */
+@utility settings-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+}
+
+/* The golden-ratio split (1.62fr : 1fr). Asymmetric, so auto-fit cannot express
+ * it — auto-fit only makes equal tracks. Container query at 48rem: below that
+ * the panels stack, above it they take the ratio the desktop layout always had. */
+@utility settings-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+
+  @container settings-pane (width >= 48rem) {
+    grid-template-columns: minmax(0, 1.62fr) minmax(0, 1fr);
+  }
+}
+
+/* Content beside a fixed-width companion panel (Overview's account snapshot).
+ * 56rem rather than 48rem: this split only pays off once the 1fr side still has
+ * ~560px after the 360px aside has taken its share. */
+@utility settings-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+
+  @container settings-pane (width >= 56rem) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 22.5rem);
+  }
+}
+
+/* ── Fluid Settings typography ───────────────────────────────────────────────
+ * Worn beside `settings-shell`. Tailwind compiles `text-display` to
+ * `font-size: var(--text-display)`, so redefining the token on this element
+ * rescales every descendant that already uses the design system's classes —
+ * no markup changes, and nothing outside Settings moves.
+ *
+ * Only the headline and metric tiers scale. They are the ones that break: a
+ * `text-display tabular-nums` rupee figure at a fixed 32px is what pushes a
+ * billing card past a 360px screen. Body, small, caption, micro and control
+ * stay fixed at 13/12/11/10/14px on purpose — they are already at the
+ * legibility floor, and clamping them DOWN for a phone would shrink the text a
+ * phone reader needs most while saving a few pixels the cards no longer need.
+ *
+ * Line heights become unitless ratios in the same breath. A clamped 24px
+ * heading under a fixed 38px line box reads as a stray gap, and the ratios
+ * below are the desktop pairs the scale already shipped (38/32, 32/28, 25/20). */
+@utility settings-type {
+  --text-display: clamp(1.5rem, 1.1rem + 2vw, 2rem);
+  --text-display--line-height: 1.19;
+
+  --text-metric-lg: clamp(1.375rem, 1.05rem + 1.6vw, 1.75rem);
+  --text-metric-lg--line-height: 1.15;
+
+  --text-metric: clamp(1.25rem, 1rem + 1.2vw, 1.5rem);
+  --text-metric--line-height: 1.17;
+
+  --text-metric-sm: clamp(1.125rem, 1.02rem + 0.5vw, 1.25rem);
+  --text-metric-sm--line-height: 1.2;
+
+  --text-title: clamp(1.125rem, 1.02rem + 0.5vw, 1.25rem);
+  --text-title--line-height: 1.25;
+
+  --text-section: clamp(1rem, 0.94rem + 0.35vw, 1.125rem);
+  --text-section--line-height: 1.34;
+
+  --text-heading: clamp(0.875rem, 0.85rem + 0.15vw, 0.9375rem);
+  --text-heading--line-height: 1.34;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    min-height: var(--app-vh);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Native controls the browser paints itself — checkboxes, radios, range
+   * thumbs, progress bars, and the highlighted segment of date/time inputs —
+   * default to the OS accent, which is blue on Windows. `accent-color`
+   * inherits, so declaring it once here brands every one of them instead of
+   * patching the ~40 call sites that use a native <input> or <select>.
+   *
+   * It does NOT reach a native <select>'s option list: that popup is drawn by
+   * the OS and is unreachable from CSS. Anywhere that list matters, use the
+   * Radix Select in src/core/ui/select.jsx, which renders its own menu. */
+  :root {
+    accent-color: var(--brand);
+  }
+
+  ::selection {
+    background: var(--brand-soft);
+    color: var(--brand-ink);
+  }
+
+  /* ── Dropdown hover: the brand gradient ─────────────────────────────────
+   * Every dropdown filter wears the same soft brand wash on hover. The Radix
+   * Select and DropdownMenu in src/core/ui carry it as classes; the ~140
+   * native <select>s across the app get it here rather than at each call
+   * site. background-IMAGE only, so a component's own bg colour still shows
+   * underneath, and (being @layer base) any select that sets its own image —
+   * a custom chevron, say — keeps it. */
+  select:not(:disabled):hover {
+    background-image: linear-gradient(to right, color-mix(in oklab, var(--brand) 15%, transparent), color-mix(in oklab, var(--brand-active) 5%, transparent));
+  }
+
+  /* ── Search boxes: the same wash on hover and while typing ──────────────
+   * Matched by role rather than by class, so all ~70 search fields pick it up
+   * without touching each one: type="search", or a placeholder that starts
+   * with "Search". Brand at low alpha over the field's own background, so it
+   * reads as a warm tint on the light theme and a faint glow on the dark one
+   * from the one rule — no per-theme colours to keep in step. Lighter than
+   * the dropdown wash: there is text being typed on top of this one. */
+  input[type="search"]:not(:disabled):is(:hover, :focus),
+  input[placeholder^="Search" i]:not(:disabled):is(:hover, :focus) {
+    background-image: linear-gradient(135deg, color-mix(in oklab, var(--brand) 10%, transparent), color-mix(in oklab, var(--brand-active) 4%, transparent));
+  }
+
+  /* ── Native date & time inputs ──────────────────────────────────────────
+   * There are ~33 of these across the app, so they are branded here rather
+   * than at each call site. This sits in @layer base, which Tailwind orders
+   * below utilities — every rule here is a floor that a component's own
+   * `bg-*` / `border-*` class still overrides.
+   *
+   * `color-scheme` is the important one. It is what tells the browser which
+   * palette to paint the parts CSS cannot reach: the drop-down calendar and
+   * clock panels, the spin buttons, and the AM/PM list. Without it those
+   * panels stay light-on-light in dark mode. It is set per theme rather than
+   * globally for exactly that reason. */
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  input[type="month"],
+  input[type="week"] {
+    color-scheme: light;
+    background-color: var(--surface);
+    color: var(--text-secondary);
+    border-color: var(--line);
+  }
+
+  .dark input[type="date"],
+  .dark input[type="time"],
+  .dark input[type="datetime-local"],
+  .dark input[type="month"],
+  .dark input[type="week"] {
+    color-scheme: dark;
+  }
+
+  input[type="date"]:focus-visible,
+  input[type="time"]:focus-visible,
+  input[type="datetime-local"]:focus-visible,
+  input[type="month"]:focus-visible,
+  input[type="week"]:focus-visible {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent);
+  }
+
+  /* The label text inside the field (the literal separators and the unfilled
+   * placeholder segments) follows the input's own colour, so it is themed by
+   * the rule above. The HIGHLIGHT on the segment currently being edited is not:
+   * Chrome paints it from the platform selection colour inside a closed shadow
+   * root. Verified against Chrome 152 — with the input focused and the
+   * highlight on screen, none of
+   *   ::-webkit-datetime-edit-<part>-field:focus
+   *   input:focus ... ::selection / ::highlight(selection)
+   * match it, and `accent-color` does not reach it either. The only selector
+   * that paints is the unconditional
+   *   ::-webkit-datetime-edit-hour-field { background: … }
+   * which cannot tell the selected segment from its neighbours, so using it
+   * would tint every segment and destroy the cue instead of recolouring it.
+   * Left alone deliberately: a wrong-but-branded highlight would be worse than
+   * a correct one in the platform colour. Anywhere this matters visually, use
+   * a custom control rather than a native date/time input. */
+
+  /* The calendar / clock button at the end of the field. Rather than tint the
+   * browser's own glyph with a filter chain — which is guesswork, and lands on
+   * a different colour in each theme — the glyph is replaced by a mask and
+   * painted with the brand token, so it is exactly the brand colour and stays
+   * correct when the token changes. The element keeps its native click
+   * behaviour; only its paint is ours. */
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator,
+  input[type="week"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 1;
+    background-image: none;
+    background-color: var(--brand);
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-image: var(--picker-icon-calendar);
+    mask-image: var(--picker-icon-calendar);
+    transition: opacity 120ms ease;
+  }
+
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    -webkit-mask-image: var(--picker-icon-clock);
+    mask-image: var(--picker-icon-clock);
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator:hover,
+  input[type="time"]::-webkit-calendar-picker-indicator:hover,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
+  input[type="month"]::-webkit-calendar-picker-indicator:hover,
+  input[type="week"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 0.72;
+  }
+}
+
+/* ── Glass card surfaces ────────────────────────────────────────────────────
+ * Cards drop their 1px border and pick up a translucent fill, a backdrop blur
+ * and a shadow instead.
+ *
+ * SCOPE: `bg-surface` is used 1240 times — on cards, but also on buttons, list
+ * rows and mobile sheets. Rounding is what separates them: cards are rounded-xl
+ * / rounded-2xl, controls are rounded-lg / -md / -full. So this targets the
+ * card radii only, and controls keep their solid fill and their border. Do not
+ * widen these selectors to bare `.bg-surface` — you would put card shadows on
+ * every button in the product.
+ *
+ * These rules are deliberately UNLAYERED. Tailwind v4 emits its utilities
+ * inside `@layer utilities`, and unlayered CSS outranks every layer regardless
+ * of specificity, which is what lets `border-color: transparent` beat
+ * `border-line`. The border-WIDTH is left in place so nothing reflows.
+ *
+ * In dark this is a genuine improvement in legibility, not just decoration: a
+ * solid #090F1D card sat 1.035:1 against the canvas and depended entirely on
+ * its border, whereas the translucent fill reads 1.257:1 on its own. In light
+ * the fill lands within 1.04:1 of the canvas, so there the SHADOW is what
+ * defines the card — soften it and light cards will melt into the page.
+ *
+ * PERF: backdrop-filter is GPU-composited and this matches ~273 elements. On
+ * the video-heavy routes (Monitor Wall, Live View) that is real cost. Set
+ * --glass-blur to `none` to disable the blur while keeping the fill+shadow. */
+:root {
+  --glass-fill:   rgba(255, 255, 255, 0.72);
+  --glass-blur:   blur(16px) saturate(140%);
+  --glass-shadow: 0 1px 2px rgba(15, 23, 42, 0.05),
+                  0 10px 30px -8px rgba(15, 23, 42, 0.12);
+}
+
+/* The dark fill drops from 0.10 to 0.06. At 0.10 over the old near-black
+ * canvas the glass WAS the card — it composited to ~#1F232B while a solid
+ * `bg-surface` control next to it stayed #090F1D, so the product had two
+ * different-looking card fills depending on the border radius. Now the surface
+ * ladder carries the elevation and the glass only has to lift off it: 0.06
+ * over #0E1116 composites to #1C1F24, one gentle step above the solid #181C24,
+ * and the two systems finally agree.
+ *
+ * The two insets are what make a dark panel look built rather than filled. The
+ * ring is the card's edge — glass cards zero out `border-color`, so without it
+ * the corners dissolve — and the top highlight reads as light landing on the
+ * near lip of the surface. Both are white at very low alpha, so they ride on
+ * whatever is behind the panel instead of fighting it. */
+.dark {
+  --glass-fill:   rgba(255, 255, 255, 0.06);
+  --glass-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.045),
+                  0 1px 2px rgba(0, 0, 0, 0.30),
+                  0 12px 28px -10px rgba(0, 0, 0, 0.55);
+}
+
+/* Dialogs are excluded: glass is for cards ON the page. A modal sits over a
+ * dimmed backdrop, and a 72%-white fill lets that dim show through — the whole
+ * dialog read washed-out grey. Dialogs keep the solid surface. */
+.bg-surface.rounded-xl:not([role="dialog"]),
+.bg-surface.rounded-2xl:not([role="dialog"]),
+.bg-surface.rounded-3xl:not([role="dialog"]) {
+  background-color: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-color: transparent;
+  box-shadow: var(--glass-shadow);
+}
+
+/* Softer corners on the glass panels. Radius scales with the surface: a 195x120
+ * KPI tile at 12px read as a tight, cut corner next to a blurred translucent
+ * fill. The steps stay proportional so the xl / 2xl / 3xl hierarchy survives.
+ * Controls are deliberately NOT included -- buttons and inputs keep the 8px
+ * family, because radius should track element size rather than being uniform. */
+.bg-surface.rounded-xl  { border-radius: 18px; }
+.bg-surface.rounded-2xl { border-radius: 22px; }
+.bg-surface.rounded-3xl { border-radius: 26px; }
+
+/* Leaflet paints its own #ddd behind the tiles, which shows through in the gaps
+ * while they load and around the edges of the world — a light grey slab in the
+ * middle of a dark page. Deliberately OUTSIDE @layer base: Leaflet's own
+ * stylesheet is unlayered, and unlayered CSS outranks anything in a layer. */
+html .leaflet-container {
+  /* !important because Leaflet's own rule is vendor CSS we do not own and it
+   * loads after ours; this is a cosmetic backdrop, not a layout property, so
+   * overriding it outright costs nothing and specificity alone did not win. */
+  background: var(--surface-sunken) !important;
+}
+
+/* Range input (dwell-time and confidence sliders).
+ *
+ * A native range cannot be dressed from utility classes: the track and the
+ * thumb live in a shadow root reachable only through the vendor pseudo-
+ * elements below. Kept unlayered and scoped to `.app-range` so it styles
+ * exactly the sliders that opt in, and never a stray <input type="range">
+ * somewhere else in the app.
+ *
+ * `accent-color` alone would recolour the track but leaves the thumb at the
+ * platform size and the track at the platform height, which is visibly taller
+ * than every other control in the panel. */
+.app-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.app-range:focus-visible { outline: none; }
+
+.app-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+.app-range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+/* The thumb is absolutely positioned against the track by the browser, so the
+ * negative margin is what centres it -- (track height - thumb height) / 2. */
+.app-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: var(--brand);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.app-range::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: var(--brand);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.app-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+.app-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+
+/* ── Printing ───────────────────────────────────────────────────────────────
+ * "Download PDF" on a report is window.print(): the browser already renders
+ * this layout faithfully, and a server-side renderer would be a second layout
+ * to keep in step with it. What print needs is the APPLICATION removed — the
+ * rail, the topbar, toasts, and every control that cannot be clicked on paper
+ * — plus a guarantee that cards are not sliced in half across a page break.
+ *
+ * Scoped to nothing in particular on purpose: any page can be printed, and a
+ * page that wants a control kept on paper opts in with `print:block`.
+ * Components mark their own screen-only chrome with `print:hidden`. */
+@media print {
+  /* The shell. Targeted by `data-app-chrome` / `data-app-content` rather than
+   * by DOM position: the first version matched on depth (`body > div > aside`)
+   * and silently stopped matching, printing the nav rail into every PDF.
+   * On screen the shell is viewport-high with <main> as the only scroller;
+   * on paper that would clip every document to one screenful, so the shell
+   * and <main> fall back to plain block flow and the page runs its full length. */
+  [data-app-chrome] { display: none !important; }
+  [data-app-shell], [data-app-content] { display: block !important; height: auto !important; overflow: visible !important; }
+  [data-app-main] { overflow: visible !important; }
+
+  /* Print on paper, not on a screen. In dark mode every token flips, and a
+   * report sent to a printer came out as white text on a black slab — costly
+   * in ink and unreadable once a printer drops the background. The light
+   * values from :root are restored here, so a dark-mode user gets the same
+   * document on paper as a light-mode one. Values mirror the light palette at
+   * the top of this file; they are duplicated rather than referenced because
+   * `.dark` has already overwritten the names. */
+  .dark {
+    color-scheme: light;
+    --text-primary: #0F172A; --text-secondary: #475569; --text-muted: #64748B;
+    --text-subtle: #94A3B8; --text-disabled: #CBD5E1; --text-inverse: #FFFFFF;
+    --surface-app: #FFFFFF; --surface: #FFFFFF; --surface-sunken: #F8FAFC; --surface-muted: #F1F5F9;
+    --line: #E2E8F0; --line-subtle: #F1F5F9; --line-strong: #CBD5E1;
+    --brand: #F7983A; --brand-hover: #E4872D; --brand-active: #C9741F; --primary-foreground: #FFFFFF;
+    --brand-soft: #FEF3E7; --brand-line: #FDE0C4; --brand-ink: #B96A15;
+    --success: #10B981; --warning: #F59E0B; --danger: #EF4444; --info: #0EA5E9;
+    --sidebar: #FFFFFF; --sidebar-border: #E2E8F0;
+    --success-soft: #ECFDF5; --success-ink: #047857; --success-line: #A7F3D0;
+    --warning-soft: #FFFBEB; --warning-ink: #B45309; --warning-line: #FDE68A;
+    --danger-soft: #FEF2F2; --danger-ink: #B91C1C; --danger-line: #FECACA;
+    --info-soft: #F0F9FF; --info-ink: #0369A1; --info-line: #BAE6FD;
+    --neutral: #94A3B8; --neutral-soft: #F1F5F9; --neutral-ink: #475569; --neutral-line: #E2E8F0;
+    --heat-0: #F8FAFC; --heat-1: #FDEFDF; --heat-2: #FBD8B2;
+    --heat-3: #F7B678; --heat-4: #EF963C; --heat-5: #C9761C;
+  }
+
+  html, body { background: #fff !important; }
+  main { min-height: 0 !important; }
+
+  /* Full-height operations frames scroll on screen; on paper they must flow. */
+  [class*="h-[calc(var(--app-vh)"] { height: auto !important; overflow: visible !important; }
+
+  /* Keep a card, a table row and a heading with what belongs to them. */
+  section, table, tr, .rounded-xl { break-inside: avoid; page-break-inside: avoid; }
+  h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+
+  /* Backgrounds and tints are load-bearing here — a severity chip with its
+   * colour stripped says nothing. */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+  @page { margin: 12mm; }
+}
+
+/* ── Toasts (core/layout/AIToastHost.jsx) ───────────────────────────────────
+ * Enter from just below the resting position, leave the same way; the timer
+ * bar drains over the toast's own `--toast-ttl` and PAUSES while the card
+ * is hovered or focused, so reading one never races its dismissal. Reduced-
+ * motion users get the same states with no travel. */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0)   scale(1); }
+  to   { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+@keyframes toast-timer {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+[data-toast] { animation: toast-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+[data-toast][data-leaving="true"] { animation: toast-out 150ms ease-in both; pointer-events: none; }
+[data-toast-timer] {
+  transform-origin: left;
+  animation: toast-timer var(--toast-ttl, 8s) linear forwards;
+}
+[data-toast]:hover [data-toast-timer],
+[data-toast]:focus-within [data-toast-timer],
+[data-toast][data-paused="true"] [data-toast-timer] { animation-play-state: paused; }
+
+/* The card's severity is ONE variable, `--tt`, set by data-tone; every tinted
+ * piece below derives from it with color-mix, so a tone is a single line and
+ * red on an offline card is the same red as the Health page's. Pieces follow
+ * the mockup: a glowing edge bar, a tinted circular icon, name chips, a
+ * badge + reason footer, and the one orange pill action. */
+[data-toast]                      { --tt: var(--toast-ink-subtle); }   /* grey, never blue */
+[data-toast][data-tone="danger"]  { --tt: var(--danger); }
+[data-toast][data-tone="warning"] { --tt: var(--warning); }
+[data-toast][data-tone="success"] { --tt: var(--success); }
+.toast-bar {
+  background: var(--tt);
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--tt) 50%, transparent);
+}
+.toast-icon {
+  background: color-mix(in srgb, var(--tt) 16%, transparent);
+  color: color-mix(in srgb, var(--tt) 68%, white);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tt) 38%, transparent),
+              0 0 22px color-mix(in srgb, var(--tt) 22%, transparent);
+}
+[data-toast][data-tone="neutral"] .toast-icon { color: var(--toast-ink); }
+.toast-eyebrow { color: color-mix(in srgb, var(--tt) 88%, white); }
+[data-toast][data-tone="neutral"] .toast-eyebrow { color: var(--toast-ink-muted); }
+.toast-chip {
+  background: var(--toast-raised);
+  color: var(--toast-ink);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+.toast-badge         { background: var(--tt); color: #fff; }
+.toast-badge-neutral { background: var(--toast-raised); color: var(--toast-ink-muted); }
+.toast-action {
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 42%, transparent);
+}
+.toast-action:hover { background: color-mix(in srgb, var(--brand) 24%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  [data-toast], [data-toast][data-leaving="true"] { animation-duration: 1ms; }
+}
+
+/* Thin, quiet scrollbar for inner panels (Settings nav and content). The
+ * default Windows scrollbar — grey track plus arrow buttons — outweighs the
+ * content beside it. Firefox and Chromium both honour scrollbar-width/-color. */
+@utility scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* ── Breaks & Idle · Quick Insights card (employee-productivity/BreakInsights.jsx)
+ * Fade + zoom from 95% on open, growing out of the side it anchors to. */
+@keyframes insights-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+[data-insights-pop] {
+  transform-origin: var(--radix-popover-content-transform-origin);
+  animation: insights-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-insights-pop] { animation: none; }
+}

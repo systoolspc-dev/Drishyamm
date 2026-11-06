@@ -1,0 +1,35 @@
+# gpu-bridge, PROD end (VMS server, listens on udp/51820).
+#
+#   GPU_BRIDGE_NETWORK=<the VMS stack's docker network> \
+#   docker compose -f docker-compose.prod.yml -p gpu-bridge up -d --build
+#
+# Find the network with:  docker inspect drisyam-original-backend \
+#   --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+# and the service names below with the same command, printing {{$v.Aliases}}.
+services:
+  gpu-bridge:
+    build: .
+    image: drishyam/gpu-bridge:latest
+    container_name: gpu-bridge
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    env_file: ${GPU_BRIDGE_ENV_FILE:-./prod.env}
+    environment:
+      # What the office may reach over the tunnel (listens on 10.8.0.1 only).
+      EXPOSE: "8554=${PROD_STREAM_HOST:-stream-service}:8554 5000=${PROD_BACKEND_HOST:-smart-cam-backend}:5000"
+      # What prod services use to reach the office AI (listens on this container's
+      # docker-network address, e.g. http://gpu-bridge:8001).
+      REACH: "8001=10.8.0.2:8001 8020=10.8.0.2:8000"
+    ports:
+      - "51820:51820/udp"
+    networks:
+      vms:
+        aliases: [gpu-bridge, prod-bridge]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  vms:
+    external: true
+    name: ${GPU_BRIDGE_NETWORK:?set GPU_BRIDGE_NETWORK to the VMS stack docker network}

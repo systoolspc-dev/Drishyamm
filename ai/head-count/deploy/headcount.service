@@ -1,0 +1,33 @@
+# systemd unit for running the head-count service on an edge device.
+#
+# Install (Jetson/Pi):
+#   1. Put the project at /opt/headcount and create a venv:
+#        python3 -m venv /opt/headcount/venv
+#        # On Jetson: install the NVIDIA torch wheel FIRST, then:
+#        /opt/headcount/venv/bin/pip install -e /opt/headcount
+#   2. sudo cp deploy/headcount.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload && sudo systemctl enable --now headcount
+#   4. Logs:  journalctl -u headcount -f
+#
+# Adjust User=, WorkingDirectory=, and paths to match your install.
+
+[Unit]
+Description=Head-count service (multi-stream YOLO + REST API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=headcount
+WorkingDirectory=/opt/headcount
+ExecStart=/opt/headcount/venv/bin/headcount --config config/config.yaml
+EnvironmentFile=-/opt/headcount/.env
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,75 @@
+# Drisyam VMS — Prometheus alert rules.
+#
+# Alerts here are LOAD-BEARING: they drive PagerDuty/Slack notifications via
+# Alertmanager (not deployed here yet). Tune thresholds to your specific
+# deployment after a 7-day soak.
+
+groups:
+  # ── Stream supervisor + camera health ────────────────────────────────────────
+  - name: drisyam-cameras
+    interval: 30s
+    rules:
+      - alert: SupervisorNoLeader
+        expr:  max(drisyam_supervisor_is_leader) == 0
+        for:   2m
+        labels: { severity: page }
+        annotations:
+          summary: "Stream supervisor has no leader"
+          description: "No backend instance is acting as supervisor leader. Camera health updates are stalled."
+
+      - alert: ManyCamerasOffline
+        expr:  sum(drisyam_camera_state{state="offline"} == 1) > 50
+        for:   5m
+        labels: { severity: page }
+        annotations:
+          summary: "{{ $value }} cameras offline"
+          description: "More than 50 cameras report supervisor state=offline. Likely a network or MediaMTX-server-wide issue."
+
+      - alert: HighFlapCameraCount
+        expr:  sum(drisyam_camera_state{state="quarantined"} == 1) > 10
+        for:   10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $value }} cameras in quarantine"
+          description: "Too many cameras are flapping and have been quarantined. Investigate camera-side issues or NVR overload."
+
+  # ── MediaMTX servers ─────────────────────────────────────────────────────────
+  - name: drisyam-mediamtx
+    interval: 30s
+    rules:
+      - alert: MediaMTXDown
+        expr:  drisyam_mediamtx_server_online == 0
+        for:   2m
+        labels: { severity: page }
+        annotations:
+          summary: "MediaMTX server {{ $labels.server }} is offline"
+
+      - alert: MediaMTXNearCapacity
+        expr:  drisyam_mediamtx_capacity_ratio > 0.9
+        for:   10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "MediaMTX server {{ $labels.server }} above 90% capacity"
+          description: "Provision an additional MediaMTX before new cameras get rejected."
+
+  # ── Process / runtime ────────────────────────────────────────────────────────
+  - name: drisyam-runtime
+    interval: 30s
+    rules:
+      - alert: BackendEventLoopLag
+        expr:  drisyam_nodejs_eventloop_lag_seconds > 0.2
+        for:   5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Backend event loop lag {{ $value }}s on {{ $labels.instance }}"
+          description: "Backend is CPU-bound or blocked on sync I/O — investigate before requests start timing out."
+
+      - alert: BackendHighErrorRate
+        expr: |
+          sum(rate(drisyam_http_requests_total{status=~"5.."}[5m]))
+            /
+          sum(rate(drisyam_http_requests_total[5m])) > 0.05
+        for:   5m
+        labels: { severity: page }
+        annotations:
+          summary: "Backend 5xx rate above 5% over 5m"

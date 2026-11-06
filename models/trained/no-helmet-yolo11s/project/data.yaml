@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['No Helmet']
+
+roboflow:
+  workspace: work-account-s-workspace
+  project: no-helmet-pluth-2bumn
+  version: 1
+  license: CC BY 4.0
+  url: https://app.roboflow.com/work-account-s-workspace/no-helmet-pluth-2bumn/1

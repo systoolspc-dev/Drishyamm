@@ -1,0 +1,33 @@
+# head-count — x86 GPU (CUDA) image.
+#
+# Same service as the CPU Dockerfile, but with the standard CUDA torch wheels
+# (the default PyPI linux build bundles CUDA 12.x). Run with `gpus: all`; the
+# NVIDIA container runtime injects the driver. `device: auto` in the config
+# then resolves to cuda and YOLOv8n inference drops from ~55 ms (prod CPU) to
+# a few ms, freeing CPU headroom for decode as camera counts grow.
+#
+# Trade-off vs the CPU image: ~2.5 GB heavier (CUDA torch). Keep the CPU
+# image for GPU-less edge boxes.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /srv/head-count
+
+# Default PyPI torch = CUDA build on linux (no --index-url override).
+RUN pip install --upgrade pip \
+    && pip install torch torchvision
+
+COPY pyproject.toml ./
+COPY src ./src
+COPY config ./config
+RUN pip install .
+
+EXPOSE 8000
+CMD ["headcount", "--config", "config/config.docker.yaml"]

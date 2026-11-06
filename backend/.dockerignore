@@ -1,0 +1,6 @@
+node_modules
+npm-debug.log
+logs
+streams
+.env
+nul_

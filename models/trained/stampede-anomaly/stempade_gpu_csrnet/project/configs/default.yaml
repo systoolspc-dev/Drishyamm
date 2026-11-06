@@ -1,0 +1,42 @@
+# Default configuration for the stempade pipeline.
+
+ingestion:
+  source: "data/samples/umn/scene1.avi"   # RTSP url or file path
+  target_fps: 15                            # frames/sec to sample
+  resize: [640, 480]
+
+motion:
+  method: "farneback"        # farneback | raft
+  farneback:
+    pyr_scale: 0.5
+    levels: 3
+    winsize: 15
+    iterations: 3
+    poly_n: 5
+    poly_sigma: 1.2
+  features: [speed, acceleration, divergence, kinetic_energy, mutual_information]
+
+density:
+  model: "csrnet"
+  weights: "weights/csrnet_shanghaitech.pth"
+  enabled: false             # enabled in Phase 2
+
+calibration:
+  homography: null           # per-camera 3x3 pixel->meter matrix (Phase 2)
+
+fusion:
+  # weighted risk score (reference weights from deployed systems)
+  weights:
+    rules: 0.10
+    clustering: 0.25
+    motion: 0.30
+    density: 0.35
+  temporal_persistence_sec: 3.0   # window over which a level must persist
+  temporal_persistence_ratio: 0.66 # fraction of the window at/above a level to emit it
+  thresholds:                      # risk score -> label
+    moderate: 0.45
+    high: 0.60
+    critical: 0.80
+
+eval:
+  metrics: [auc, lead_time, false_alarm_rate]

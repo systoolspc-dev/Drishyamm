@@ -1,0 +1,235 @@
+# ANPR experiment registry — the PLAN and the provenance rules.
+#
+# Measurements never get typed into this file. They are recorded by
+#     python run_experiment.py --id <id> --metrics data/eval/<file>.json
+# which writes data/experiments/<id>_<stamp>.json with the git commit, dataset
+# hashes, model fingerprints, seed, ANPR_* env and the metrics JSON itself.
+# `python run_experiment.py --list` merges the latest record into this table.
+# A metric field here stays "NOT MEASURED" until such a record exists.
+version: 1
+baseline: Baseline
+conventions:
+  dataset_version: >-
+    sha256 of data/train/ocr/train.csv and data/train/ocr/val.csv (the exported OCR set), plus the
+    counts of records/*/*/*.json, review/**/*.json, labelled/*.jpg, labelled_audit/*.jpg at run time.
+    run_experiment.py records all of them; a dataset changes, the hashes change, the record says so.
+  model_version: >-
+    sha256 of models/*.pt and models/ocr/model.onnx (+ plate_config.yaml) when present; hub OCR models
+    are named by their fast-plate-ocr id (cct-s-v2-global-model). Recorded by run_experiment.py.
+  metrics: >-
+    every metric is "NOT MEASURED" until a data/eval/*.json produced by eval_labels.py,
+    ablation_preprocess.py, eval_e2e.py or eval_detector.py is recorded against the experiment.
+  exact_match: "whole normalised string equal — no partial credit; raw OCR text is kept apart from normalised text"
+  human_vs_auto: "accuracy is claimed from HUMAN labels only; auto labels are the model's own reads"
+  seeds: "every training experiment fixes and records a seed; a re-run with the same seed and hashes must reproduce"
+
+experiments:
+  - id: Baseline
+    title: Stock models, current gates (as deployed 2026-09-02)
+    status: reference
+    hypothesis: >-
+      Where the pipeline stands today, measured on what officers and auditors said. Every E* is
+      compared against this record, never against a remembered number.
+    change: none
+    model:
+      vehicle_detector: "models/yolov8n.pt (COCO, ANPR_VEHICLE_CONF_MIN 0.15, per-class floors)"
+      plate_detector: "models/best.pt (generic Roboflow YOLOv8, imgsz 640, ANPR_PLATE_CONF 0.30)"
+      ocr: "fast-plate-ocr cct-s-v2-global-model + cct-xs-v2-global-model (10 slots each), constrained decode"
+      calibrator: "models/calibrator.json when present (logistic on read features), else the heuristic agreement × √OCR-conf × evidence"
+    thresholds:
+      ANPR_MIN_VOTES: 3
+      ANPR_MIN_AGREEMENT: 0.7
+      ANPR_MIN_AGREEMENT_SHORT: 0.8
+      ANPR_MIN_CONF: 0.7
+      ANPR_MIN_CONF_SHORT: 0.8
+      ANPR_MIN_DET_CONF: 0.45
+      ANPR_CONFIRM_2FRAME_AGREE: 0.9
+      ANPR_CONFIRM_2FRAME_WEIGHT: 0.9
+      ANPR_POSSIBLE_MIN_CONF: 0.55
+      ANPR_POSSIBLE_MIN_WEIGHT: 0.5
+      ANPR_TARGET_FPS: 3
+      ANPR_ENH_MAX_VARIANTS: 6
+    dataset:
+      description: >-
+        human + auto labels from GET /api/ai/anpr/labels (accuracy from human rows only); officer-labelled
+        crops in data/labelled and auditor-labelled crops in data/labelled_audit (labels.csv); evidence
+        records and the review queue on the data volume.
+      version: "see conventions.dataset_version (recorded per run)"
+      counts_at_registration:   # 2026-09-02, from the data volume and the API
+        records_json: 3624
+        review_json: 24274
+        labelled_crops: 149
+        labelled_audit_crops: 154
+        labels_api: 367
+        labels_human: 151
+        labels_auto: 216
+    hyperparams: {}
+    seed: null
+    validation:
+      - "eval_labels.py --api — human labels: exact match + Wilson CI, CER, confusions, reliability/ECE, sweeps"
+      - "ablation_preprocess.py data/labelled data/labelled_audit — single-frame OCR per preprocessing condition"
+      - "eval_e2e.py --video <clip> --gt <human GT csv> — exact plate recognition rate, false plates, latency, fps"
+      - "eval_detector.py --data <independent boxes> — mAP50, small-object recall; NOT data/train/det"
+    metrics:
+      exact_match_human: NOT MEASURED
+      cer_human: NOT MEASURED
+      ece_human: NOT MEASURED
+      ablation_best_valid_exact: NOT MEASURED
+      ablation_ensemble_exact: NOT MEASURED
+      e2e_exact_rate: NOT MEASURED
+      e2e_false_plates: NOT MEASURED
+      detector_map50: NOT MEASURED
+
+  - id: E1
+    title: Gate recalibration + superstring rule + single-read possible tier
+    status: planned (worker change only, no training)
+    hypothesis: >-
+      (a) The confidence floor (0.7) and the 3-frame rule send reads to review that the human labels show are
+      mostly right at agreement ≥ 0.7 — the eval_labels threshold sweeps give the precision/coverage of every
+      gate; move the gates to the knee, not to a feeling. (b) Dropped characters (9-char reads of 10-char plates)
+      are the dominant wrong-length error; a SUPERSTRING rule — a strict-valid longer read that contains the
+      shorter consensus as a substring wins the length vote — recovers them. (c) A single good frame with two
+      readers agreeing is a lead worth posting as 'possible'. Expect coverage up at equal or better precision,
+      dropped-character rate down, possible-tier reads up, false plates in eval_e2e unchanged.
+    change: "worker.py (_decide gates), plate_votes length-bucket rule, possible tier — no model change"
+    model: as Baseline
+    thresholds: "set from the eval_labels sweeps (precision ≥ Baseline at the chosen coverage) — recorded in the run"
+    dataset:
+      description: "as Baseline — the SAME label pull (eval_labels.py --save-api), scored before and after"
+      version: "sha256 of the saved pull JSON"
+    hyperparams: {}
+    seed: null
+    validation:
+      - "eval_labels.py --from-json <same pull> before/after — exact match, dropped-char rate, sweeps"
+      - "eval_e2e.py on ≥ 2 GT clips (day + night) before/after — exact rate, false plates, duplicates"
+      - "ablation_preprocess.py unchanged (no OCR change expected)"
+    metrics:
+      exact_match_human: NOT MEASURED
+      dropped_char_rate: NOT MEASURED
+      coverage_at_gate: NOT MEASURED
+      e2e_exact_rate: NOT MEASURED
+      e2e_false_plates: NOT MEASURED
+
+  - id: E2
+    title: OCR fine-tune (cct-s-v2) on human crops + synthetic, group split
+    status: planned (train_ocr.py)
+    hypothesis: >-
+      The hub model never saw Indian HSRP fonts, two-row layouts or these cameras' compression; a low-LR
+      fine-tune on officer/auditor-verified crops (+ confusion-targeted synthetic plates) raises single-frame
+      exact match on held-out HUMAN crops without regressing any scenario by more than 0.05.
+    change: "models/ocr/model.onnx (promoted only if better on val; the worker hot-reloads it)"
+    model:
+      base: "fast-plate-ocr cct_s_v2_global.keras (10 slots, 64×128)"
+      output: "models/ocr/model.onnx + plate_config.yaml"
+    dataset:
+      source: "export_labels.py (human 1.0 / auto 0.5 weights via ×2 rows) + synth_plates.py"
+      split: >-
+        GROUP split by plate string — no plate appears in both train and val (stronger than the
+        per-sighting stable split; the same vehicle recurs across cameras and days)
+      val: "human-only, ≥ 20 crops before any promotion (ANPR_TRAIN_MIN_VAL)"
+      version: "sha256 of train.csv / val.csv at run time"
+    hyperparams:
+      lr: 1.0e-4
+      epochs: 30
+      batch: 32
+      warmup_fraction: 0.1
+      early_stopping_patience: 10
+      synthetic: "2000 confusion-targeted plates (train only)"
+    seed: 42
+    validation:
+      - "train_ocr.py promote gate — val exact match up (or equal with char acc up), no scenario regression > 0.05"
+      - "ablation_preprocess.py data/labelled_audit with ANPR_OCR_MODEL_DIR=<run export> vs Baseline"
+      - "after deployment: eval_labels.py on labels created after the promotion timestamp only"
+    metrics:
+      val_exact_base: NOT MEASURED
+      val_exact_finetuned: NOT MEASURED
+      ablation_ensemble_exact: NOT MEASURED
+      exact_match_human_post_deploy: NOT MEASURED
+
+  - id: E3
+    title: Plate detector fine-tune with hard negatives, imgsz 640 → 960
+    status: planned (train_detector.py + a hand-boxed set)
+    hypothesis: >-
+      Missed plates are mostly SMALL (box height < 20 px at 1280 wide — distant traffic, bikes) and false
+      detections are text that is not a plate (OSD captions, stickers, signboards). Training at imgsz 960
+      with hard negatives (not_plate labels + boxed negative frames) raises recall in the <20 px bucket and
+      lowers FP on negative images, at ≤ 1.3× detector time.
+    change: "models/best_ft.pt (ANPR_PLATE_MODEL), imgsz in the worker Detector"
+    model:
+      base: "models/best.pt (YOLOv8)"
+      imgsz: 960
+    dataset:
+      positives: "records/*_frame.jpg with officer-verified boxes (correct + wrong reads = a real plate box)"
+      hard_negatives: "not_plate verdicts + hand-boxed negative frames (OSD, signboards, decals, railings)"
+      independent_val: "hand-drawn boxes on frames never used for training, incl. negatives (eval_detector.py docstring)"
+      version: "sha256 of the val label files at run time"
+    hyperparams:
+      epochs: 40
+      lr0: 0.002
+      lrf: 0.05
+      freeze: 4
+      fliplr: 0.0
+      degrees: 5.0
+      scale: 0.3
+    seed: 0
+    validation:
+      - "eval_detector.py --data <independent data.yaml> for base and fine-tuned — mAP50, recall per height bucket, FP per negative image"
+      - "bench_gpu.py — plate-detect ms at 960 vs 640"
+    metrics:
+      detector_map50: NOT MEASURED
+      recall_lt20px: NOT MEASURED
+      fp_per_negative_image: NOT MEASURED
+      plate_detect_ms: NOT MEASURED
+
+  - id: E4
+    title: 11-slot OCR head (3-letter series plates)
+    status: planned
+    hypothesis: >-
+      A 10-slot recogniser cannot emit an 11-character plate (MH12ABC1234); export_labels.py drops those rows
+      and the worker can only ever misread such vehicles. A cct-s-v2 model with max_plate_slots 11 (new head,
+      body initialised from the 10-slot weights) reads them, with no loss on 8–10-character plates.
+    change: "models/ocr/ (plate_config max_plate_slots 11) — the plate_ocr.py truncation guard becomes moot for 11"
+    model:
+      base: "cct_s_v2_global.keras body, re-initialised 11-slot head"
+    dataset:
+      description: "as E2 plus every 11-character human label (currently dropped by export_labels.py) and synthetic 11-char plates"
+      version: "sha256 of train.csv / val.csv at run time"
+    hyperparams:
+      lr: 1.0e-4
+      epochs: 40
+      batch: 32
+    seed: 42
+    validation:
+      - "ablation_preprocess.py on an 11-char labelled subset (exact match currently 0 by construction) + labelled_audit (no regression)"
+      - "train_ocr.py val gate as E2"
+    metrics:
+      exact_11char: NOT MEASURED
+      ablation_ensemble_exact: NOT MEASURED
+
+  - id: E5
+    title: Learned confidence calibrator (logistic regression on read features)
+    status: planned (train_calibrator.py)
+    hypothesis: >-
+      The heuristic confidence is mis-calibrated (eval_labels reliability table / ECE); a logistic model on
+      meta.features (agreement, OCR conf, readers_agree, frames, crop size, sharpness, det_conf, alt_margin …)
+      fitted on human labels lowers ECE and dominates the precision/coverage curve, so the posting gate can
+      be a single calibrated threshold.
+    change: "models/calibrator.json (the worker hot-reloads it; confidence_source = calibrator)"
+    model: "calibrator.py Calibrator (numpy logistic, L2, standardised inputs)"
+    dataset:
+      description: "human labels with features from /labels/export (need ≥ 30 labels with ≥ 8 of each class)"
+      version: "sha256 of the label pull JSON (eval_labels.py --save-api) at run time"
+    hyperparams:
+      l2: 1.0
+      iters: 600
+      lr: 0.2
+      folds: 5
+    seed: 7
+    validation:
+      - "calibrator.cross_validate — CV AUC / accuracy"
+      - "eval_labels.py reliability table + ECE with calibrator-scored confidences (held-out folds) vs heuristic"
+      - "threshold sweep precision/coverage vs Baseline"
+    metrics:
+      cv_auc: NOT MEASURED
+      ece_heuristic: NOT MEASURED
+      ece_calibrated: NOT MEASURED

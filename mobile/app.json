@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "Drishyam",
+    "slug": "drishyam-app",
+    "version": "1.8.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "drishyam",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#F4F6F8",
+    "ios": {
+      "bundleIdentifier": "ai.thecodestory.drishyam",
+      "icon": "./assets/expo.icon",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "ai.thecodestory.drishyam",
+      "adaptiveIcon": {
+        "backgroundColor": "#F7983A",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
+    },
+    "web": {
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/images/splash-logo.png",
+          "imageWidth": 180,
+          "dark": {
+            "backgroundColor": "#121212",
+            "image": "./assets/images/splash-logo.png"
+          }
+        }
+      ],
+      "expo-system-ui",
+      "expo-secure-store",
+      "expo-video",
+      "expo-font",
+      "expo-audio",
+      [
+        "expo-notifications",
+        {
+          "color": "#F7983A"
+        }
+      ],
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-asset"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "55ded5ae-f256-4c63-974f-c5dd3d3e2485"
+      }
+    },
+    "owner": "soniya-dev"
+  }
+}

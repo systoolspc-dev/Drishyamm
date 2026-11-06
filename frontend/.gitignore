@@ -1,0 +1,43 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Local env files — NEVER commit real values. Keep .env.example as the template.
+.env
+.env.*
+!.env.example
+
+# Tooling / test artifacts
+.playwright-mcp/
+coverage/
+
+# Demo / sample media — too large for git; some exceed GitHub's 100MB hard limit.
+# Serve these from a CDN/asset host; drop into public/demos + src assets at deploy.
+*.mpg
+*.mov
+*.avi
+*.mkv
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+whatidid.md
+OPTIMIZATION.md
+SCHOOL_HEADCOUNT.md

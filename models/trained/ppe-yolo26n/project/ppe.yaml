@@ -1,0 +1,22 @@
+# Construction-PPE dataset — local copy
+# Corrected version of dataset/data.yaml with an absolute `path` so Ultralytics
+# resolves the image folders regardless of the current working directory.
+
+path: c:/projects/ppe/dataset   # dataset root dir
+train: images/train             # 1132 images (relative to 'path')
+val: images/val                 # 143 images
+test: images/test               # 141 images
+
+# Classes
+names:
+  0: helmet
+  1: gloves
+  2: vest
+  3: boots
+  4: goggles
+  5: none
+  6: Person
+  7: no_helmet
+  8: no_goggle
+  9: no_gloves
+  10: no_boots

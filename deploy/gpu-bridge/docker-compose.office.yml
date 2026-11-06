@@ -1,0 +1,31 @@
+# gpu-bridge, OFFICE end (GPU box, dials out to prod; no inbound port needed).
+#
+#   GPU_BRIDGE_NETWORK=<the AI stack's docker network> \
+#   docker compose -f docker-compose.office.yml -p gpu-bridge up -d --build
+#
+# Office AI services then use rtsp://gpu-bridge:8554/... and http://gpu-bridge:5000
+# to reach the prod stream service and backend.
+services:
+  gpu-bridge:
+    build: .
+    image: drishyam/gpu-bridge:latest
+    container_name: gpu-bridge
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    env_file: ${GPU_BRIDGE_ENV_FILE:-./office.env}
+    environment:
+      # What local (office) services use to reach prod across the tunnel.
+      REACH: "8554=10.8.0.1:8554 5000=10.8.0.1:5000"
+      # What prod may reach here (listens on 10.8.0.2 only).
+      EXPOSE: "8001=${OFFICE_AI_HOST:-smart-cam-ai}:8001 8000=${OFFICE_HEADCOUNT_HOST:-head-count}:8000"
+    networks:
+      ai:
+        aliases: [gpu-bridge, office-bridge]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  ai:
+    external: true
+    name: ${GPU_BRIDGE_NETWORK:?set GPU_BRIDGE_NETWORK to the AI stack docker network}

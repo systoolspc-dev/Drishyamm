@@ -1,0 +1,14 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.db
+*.db-wal
+*.db-shm
+tests/
+.pytest_cache/
+*.log
+.DS_Store
+deploy/
