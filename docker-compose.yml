@@ -329,6 +329,12 @@ services:
       # Hold the RTSP pull 5 min after the last viewer: a short hold caused a
       # reconnect storm that NVRs throttle.
       SOURCE_CLOSE_AFTER: "5m"
+      # Live relay audio (G.711 → AAC) OFF, as in production. With it on, ffmpeg
+      # fails to open the audio output on some cameras ("Could not write header
+      # ... output stream 0:1"), the relay crash-loops, and tiles fall back to
+      # WebRTC + CPU H.264 transcode: measured 2026-11-09, 55-78 % of Monitor
+      # Wall tiles never played. Set RELAY_AUDIO=1 in .env to try audio.
+      RELAY_AUDIO: "${RELAY_AUDIO:-0}"
       # Quarantine a flapping camera after 4 flaps in 2 min, for 10 min.
       SUPERVISOR_FLAP_LIMIT: "4"
       SUPERVISOR_FLAP_WINDOW_MS: "120000"
