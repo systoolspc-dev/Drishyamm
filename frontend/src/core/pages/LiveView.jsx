@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { releaseAllStreams } from '@/core/services/streamCache';
-import { playerQuality } from '@/core/lib/utils';
+import { fullscreenQuality, playerQuality } from '@/core/lib/utils';
 import { Badge } from '@/core/ui/badge';
 import { useGroups } from '@/core/hooks/useQueries';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -16,6 +16,7 @@ import { RequireCameras } from '@/core/components/RequireCameras';
 import { useAuthStore } from '@/core/store/authStore';
 import { makeEntitlement } from '@/core/nav/entitlements';
 import DirectStreamPlayer from '@/core/players/DirectStreamPlayer';
+import { setWarmHints } from '@/core/hooks/useStreamPrewarm';
 import TalkBackPanel from '@/core/components/TalkBackPanel';
 import {
   Camera, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Circle,
@@ -148,6 +149,14 @@ function GridTile({
   const [menuOpen, setMenuOpen] = useState(false);
   const online = camera?.status === 'online';
 
+  // This tile is the fullscreen element → play main instead of the grid sub.
+  const [tileFs, setTileFs] = useState(false);
+  useEffect(() => {
+    const onFs = () => setTileFs(!!boxRef.current && document.fullscreenElement === boxRef.current);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+
   // Pause/play is applied straight to the media element. There is no `paused`
   // prop on the player, and adding one would touch a component six other pages
   // render, so the tile drives its own <video> instead.
@@ -184,7 +193,7 @@ function GridTile({
         <DirectStreamPlayer
           monitorId={camera?.monitorId}
           mode="webrtc"
-          quality={playerQuality(camera, 'low')}
+          quality={tileFs ? fullscreenQuality(camera) : playerQuality(camera, 'low')}
           muted={muted}
           controls={false}
           qualityControl={false}   /* grid uses the saved quality; gear is on single view */
@@ -461,7 +470,7 @@ function SiteTree({ sites, groups, selectedCamera, onSelectCamera, gridCameras, 
       <div className="px-4 py-10 text-center">
         <Building2 className="mx-auto mb-2 h-8 w-8 text-fg-muted/20" />
         <p className="text-body font-medium text-fg-muted">No sites yet</p>
-        <p className="mt-1 text-small text-fg-muted/70">Create sites under Camera Setup.</p>
+        <p className="mt-1 text-small text-fg-muted/70">Create sites under Setup › Add cameras.</p>
       </div>
     );
   }
@@ -822,7 +831,7 @@ function SelectedCameraStrip({ camera, place, soundOn, onSingle, onPlayback, onS
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <ActionBtn onClick={onSingle} icon={MonitorPlay}>Single view</ActionBtn>
-        <ActionBtn onClick={onPlayback} icon={History} title="Open the last five minutes in Playback">Playback</ActionBtn>
+        <ActionBtn onClick={onPlayback} icon={History} title="Open the last five minutes in Recordings">Recordings</ActionBtn>
         {online && <ActionBtn onClick={onSnapshot} icon={ImageDown}>Snapshot</ActionBtn>}
         <button
           type="button"
@@ -1341,6 +1350,13 @@ export default function LiveView() {
   // holds instead (see gridFit), so a short last page is not a hole.
   const turnPage = (dir) => setPage(Math.min(Math.max(0, pageIndex + dir), pages.length - 1));
 
+  // Warm the next page's cameras so turning the page plays at once.
+  const nextPageIds = gridMode && pages.length > 1
+    ? (pages[(pageIndex + 1) % pages.length] || [])
+      .filter((c) => c?.status === 'online' && c.monitorId).map((c) => c.monitorId).join(',')
+    : '';
+  useEffect(() => { setWarmHints(nextPageIds ? nextPageIds.split(',') : []); }, [nextPageIds]);
+
   // Clicking a camera in the list means "watch this one" in Single View and
   // "show me that one" in Multi View: the grid turns to the page it is on and
   // its tile lights up. (Two earlier versions made the click build the grid;
@@ -1507,7 +1523,7 @@ export default function LiveView() {
        height taken from it. Edge to edge for the same reason. */
     <OperationsPage bleed>
       <PageContent>
-        <RequireCameras description="Add cameras from Camera Setup to watch their feeds live, side by side.">
+        <RequireCameras description="Add your cameras to watch their feeds live, side by side.">
         {/*  Desktop layout  */}
         <PageCard className="flex min-h-0 flex-1 overflow-hidden rounded-none border-0 bg-surface shadow-none">
 
@@ -1780,7 +1796,7 @@ export default function LiveView() {
                     <DirectStreamPlayer
                       monitorId={selectedCamera.monitorId}
                       mode="webrtc"           /* auto: WebRTC → silent HLS fallback */
-                      quality={playerQuality(selectedCamera, 'high')}
+                      quality={fullscreenQuality(selectedCamera)}
                       /* Starts muted so autoplay isn't blocked (Chrome throws
                          NotAllowedError on autoplay-with-sound → black frame).
                          The control bar below turns sound on. */

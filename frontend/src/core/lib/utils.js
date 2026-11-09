@@ -45,3 +45,10 @@ export function playerQuality(camera, dflt) {
     default:     return dflt;   // unset → inherit the view's bandwidth default
   }
 }
+
+// A single camera filling the screen plays the main stream: 'auto' means main
+// there (the live relay shows the sub at once and swaps to main when it moves).
+export function fullscreenQuality(camera) {
+  const q = playerQuality(camera, 'high');
+  return q === 'auto' ? 'high' : q;
+}

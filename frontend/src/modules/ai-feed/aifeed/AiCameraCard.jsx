@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Maximize2, Minimize2, ScanFace, VideoOff, WifiOff } from 'lucide-react';
 import DirectStreamPlayer from '@/core/players/DirectStreamPlayer';
-import { cn, playerQuality } from '@/core/lib/utils';
+import { cn, fullscreenQuality, playerQuality } from '@/core/lib/utils';
+import { forcedDecoder, relaySupported, subscribe } from '@/core/services/liveRelay';
 import { toneClass } from '@/core/ui/tone';
 import { DetectionOverlay, ZoneOverlay } from './overlays';
 import { DemoScene, EventBoxOverlay } from './EventBoxOverlay';
@@ -61,6 +62,10 @@ export default function AiCameraCard({
   const cardRef = useRef(null);
   const inView = useInView(cardRef);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Another card is fullscreen: this one can't be seen, so it stops decoding and
+  // leaves the browser's decoder to that card's main. Its relay connection stays
+  // open (below), so the picture is back at once on exit.
+  const [hiddenByFullscreen, setHiddenByFullscreen] = useState(false);
 
   useEffect(() => {
     registerRef?.(cam.monitorId, cardRef.current);
@@ -68,12 +73,28 @@ export default function AiCameraCard({
   }, [cam.monitorId, registerRef]);
 
   useEffect(() => {
-    const onChange = () => setIsFullscreen(document.fullscreenElement === cardRef.current);
+    const onChange = () => {
+      const fs = document.fullscreenElement;
+      setIsFullscreen(fs === cardRef.current);
+      setHiddenByFullscreen(!!fs && fs !== cardRef.current);
+    };
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
 
   const online = cam.status === 'online';
+
+  const holdStream = hiddenByFullscreen && inView && online && !demo
+    && relaySupported() && forcedDecoder() !== 'webrtc';
+  const holdMain = playerQuality(cam, 'low') === 'high';
+  useEffect(() => {
+    if (!holdStream) return undefined;
+    const idle = { init() {}, frame() {} };
+    const release = [subscribe(cam.monitorId, 'sub', idle)];
+    if (holdMain) release.push(subscribe(cam.monitorId, 'main', idle));
+    return () => release.forEach((off) => off());
+  }, [holdStream, holdMain, cam.monitorId]);
+
   const boxes = detections?.boxes || [];
   const liveCount = aiEnabled ? (detections?.people?.smoothed_total ?? boxes.length) : 0;
   const headline = summary?.headline || null;
@@ -217,13 +238,13 @@ export default function AiCameraCard({
           <div className="absolute inset-0 grid place-items-center bg-[#0b0c10]">
             <VideoOff className="h-6 w-6 text-white/25" strokeWidth={1.6} />
           </div>
-        ) : inView ? (
+        ) : inView && !hiddenByFullscreen ? (
           <>
             <DirectStreamPlayer
               key={cam.monitorId}
               monitorId={cam.monitorId}
               mode="webrtc"
-              quality={playerQuality(cam, 'low')}
+              quality={isFullscreen ? fullscreenQuality(cam) : playerQuality(cam, 'low')}
               muted
               controls={false}
               aiOverlay={false}

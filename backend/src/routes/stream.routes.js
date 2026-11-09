@@ -10,6 +10,10 @@ router.get('/status/:monitorId', authenticate, streamController.getStreamStatus)
 // session per recorder). See services/liveSnapshot.service.js.
 router.get('/snapshot/:monitorId', authenticate, streamController.getSnapshot);
 router.post('/watchdog/run',     authenticate, streamController.runWatchdog);
+// App heartbeat while a user is logged in: keeps their cameras' grid streams
+// running so tiles open instantly. See services/streamWarm.service.js.
+router.post('/live/:monitorId/ticket', authenticate, streamController.liveTicket);
+router.post('/warm',             authenticate, streamController.warmStreams);
 
 // Adaptive bitrate master playlist — serves a multi-variant HLS playlist
 // referencing both main and sub streams as quality tiers.

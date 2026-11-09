@@ -35,10 +35,16 @@ const WallBuilder = lazy(() => import('./MonitorWall'));
 
 const AUTO = 'auto';
 
-// Live View's "Add to Monitor Wall" leaves cameras for the builder to pick up.
+// Grid sizes offered for the "All cameras" wall. Bigger grids are safe: a
+// recorder still serves at most NVR_PULL_LIMIT streams per page (see
+// liveBudget), so tiles past that budget show a still instead of a player.
+const AUTO_GRIDS = [2, 3, 4, 5, 6];
+// Live View's "Add to video wall" leaves cameras for the builder to pick up.
 const hasLiveViewPick = () => {
   try { return !!localStorage.getItem('monitorWall.pick'); } catch { return false; }
 };
+const DEFAULT_AUTO_GRID = 3;
+const autoValue = (n) => `${AUTO}:${n}`;
 
 export default function MonitorWallHome() {
   const navigate = useNavigate();
@@ -57,8 +63,15 @@ export default function MonitorWallHome() {
   const offlineCount = cameras.length - onlineCount;
 
   // ── Which wall ───────────────────────────────────────────────────────────
-  // The 3 × 3 of everything, unless this person chose a saved wall before.
-  const auto = useMemo(() => M.buildAutoWall(cameras), [cameras]);
+  // Every camera at the chosen density, unless this person picked a saved wall.
+  const [autoGrid, setAutoGrid] = useState(() => {
+    const g = M.readMe(user?.id).autoGrid;
+    return AUTO_GRIDS.includes(g) ? g : DEFAULT_AUTO_GRID;
+  });
+  const auto = useMemo(
+    () => M.buildAutoWall(cameras, { cols: autoGrid, rows: autoGrid }),
+    [cameras, autoGrid],
+  );
   const [choice, setChoice] = useState(() => {
     const me = M.readMe(user?.id);
     return me.wallId || me.lastOpenedId || AUTO;
@@ -77,9 +90,17 @@ export default function MonitorWallHome() {
   const expanded = expandedId ? byId.get(expandedId) : null;
 
   const choose = (v) => {
-    setChoice(v);
     setPage(0);
     setExpandedId(null);
+    if (typeof v === 'string' && v.startsWith(`${AUTO}:`)) {
+      const n = Number(v.slice(AUTO.length + 1));
+      const grid = AUTO_GRIDS.includes(n) ? n : DEFAULT_AUTO_GRID;
+      setAutoGrid(grid);
+      setChoice(AUTO);
+      M.rememberMe(user?.id, { wallId: AUTO, autoGrid: grid });
+      return;
+    }
+    setChoice(v);
     M.rememberMe(user?.id, { wallId: v });
   };
   const goTo = (i) => { if (pageCount) setPage(((i % pageCount) + pageCount) % pageCount); };
@@ -88,6 +109,9 @@ export default function MonitorWallHome() {
   // { layoutId } edits a saved wall; { draft } shapes the 3 × 3 of everything
   // into a wall that can be saved; {} lets the builder pick up a Live View
   // selection. When it closes with a saved layout, the wall shows that one.
+  // (Prod hid Edit wall while /api/wall-layouts was missing on its backend;
+  // the backend deployed with this build ships it — wallLayout routes and
+  // migration 032 — so the builder is back.)
   const [editing, setEditing] = useState(() => (manage && hasLiveViewPick() ? {} : null));
   const openEditor = () => setEditing(saved ? { layoutId: saved.id } : { draft: layout });
   const closeEditor = (savedId) => {
@@ -167,11 +191,13 @@ export default function MonitorWallHome() {
           <>
             <label className="relative" title="Which wall to show">
               <select
-                value={saved ? saved.id : AUTO}
+                value={saved ? saved.id : autoValue(autoGrid)}
                 onChange={(e) => choose(e.target.value)}
                 className="h-9 cursor-pointer appearance-none rounded-lg border border-line bg-surface pl-3 pr-8 text-small font-semibold text-fg outline-none transition hover:bg-surface-sunken focus-visible:ring-2 focus-visible:ring-brand/40"
               >
-                <option value={AUTO}>{M.AUTO_WALL_NAME} · 3 × 3</option>
+                {AUTO_GRIDS.map((n) => (
+                  <option key={n} value={autoValue(n)}>{M.AUTO_WALL_NAME} · {n} × {n}</option>
+                ))}
                 {layouts.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
@@ -228,7 +254,7 @@ export default function MonitorWallHome() {
       <PageContent>
         <RequireCameras
           canSetup={manage}
-          description="Add a recorder or camera in Camera Setup and the wall fills itself."
+          description="Add a recorder or camera under Setup › Add cameras and the wall fills itself."
         >
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-black shadow-sm ring-1 ring-line">
           {!cameras.length ? (
@@ -236,7 +262,7 @@ export default function MonitorWallHome() {
               <VideoOff className="h-10 w-10 text-white/40" />
               <p className="text-heading text-white">No cameras yet</p>
               <p className="max-w-md text-body text-white/60">
-                {manage ? 'Add a recorder or camera in Camera Setup and the wall fills itself.' : 'Your admin has not added cameras to this account yet.'}
+                {manage ? 'Add a recorder or camera under Setup › Add cameras and the wall fills itself.' : 'Your admin has not added cameras to this account yet.'}
               </p>
               {manage && (
                 <Link to="/camera-setup" className="mt-2 inline-flex h-9 items-center rounded-lg bg-brand px-4 text-body font-semibold text-white hover:bg-brand-hover">

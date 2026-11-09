@@ -14,6 +14,46 @@ other computers, production hardening and moving data from an existing box.
 | Git LFS | `git lfs install` | `apt install git-lfs && git lfs install` |
 | Disk | ~40 GB for images + models, plus recordings | same |
 
+### Windows: Docker Engine inside WSL2 Ubuntu (tested, recommended)
+
+Docker Desktop is optional. This setup was verified on WSL2 Ubuntu with Docker
+Engine installed inside Ubuntu (RTX A2000). **Don't run both**: Docker Desktop's
+WSL integration takes over `/var/run/docker.sock` and leaves broken CLI plugin
+links. If Docker Desktop was installed, uninstall it on Windows, then run
+`wsl --shutdown` in PowerShell before continuing.
+
+In the Ubuntu shell:
+
+```bash
+# Docker Engine + compose/buildx plugins (Docker's apt repo)
+sudo apt-get update && sudo apt-get install -y ca-certificates curl git git-lfs
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER          # then close and reopen the shell
+
+# NVIDIA Container Toolkit (the Windows NVIDIA driver supplies the GPU; don't
+# install a Linux driver inside WSL)
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+
+sudo systemctl enable --now docker     # needs systemd=true in /etc/wsl.conf (default on new installs)
+sudo systemctl restart docker
+docker compose version                 # must print a version (≥ 2.24), not "unknown shorthand flag"
+```
+
+Keep the repo inside the Linux filesystem (e.g. `~/github-repos/`), not on
+`/mnt/c`, because bind mounts and builds on `/mnt/c` are very slow.
+
 Check the GPU is visible to containers before anything else:
 
 ```bash
@@ -33,6 +73,9 @@ git lfs pull                       # if the clone ran before `git lfs install`
 ```
 
 (Copying the folder directly works too — the weights are already inside it.)
+
+After `git lfs pull`, `git status` may list model weights and demo videos as
+modified. That's expected: some were committed as LFS pointers. Don't commit them.
 
 ## 3. Configure
 
@@ -61,6 +104,11 @@ Everything else has working defaults. `.env.example` and
 docker compose up -d --build
 docker compose ps
 ```
+
+MinIO uses `bitnamilegacy/minio:2024.10.13`, Bitnami's archived build of
+MinIO 2024-10-13. The official `minio/minio` images can no longer be pulled, so
+this isn't optional. It's already set in `docker-compose.yml`, so no extra step
+or override file is needed.
 
 The first build pulls CUDA / PyTorch base images and installs Python wheels —
 15-30 minutes depending on bandwidth. Later starts take seconds.
@@ -223,6 +271,10 @@ Deep developer guides: [dev/README.md](dev/README.md).
 | Live view black from another PC, fine on the server | `HOST_IP` / `PUBLIC_*_URL` still `localhost`. |
 | Every journey/face call returns 401 | backend and AI disagree on the token (both come from `SERVICE_TOKEN` here) or the clock drifted > 30 s. |
 | Cameras flap online/offline behind one NVR | too many concurrent pulls on a weak NVR — sub-stream, fewer tiles, no record-all. |
+| `docker compose up -d` → `unknown shorthand flag: 'd'` | compose plugin missing, usually dangling links left by Docker Desktop. `sudo apt-get install docker-compose-plugin docker-buildx-plugin`, then `wsl --shutdown` (or `sudo find /usr/local/lib/docker/cli-plugins -type l -lname '/mnt/wsl/docker-desktop/*' -delete`). |
+| `pull access denied` / `manifest unknown` for `minio/minio` | an old compose file. Use `bitnamilegacy/minio:2024.10.13` as in the current `docker-compose.yml`. |
+| `localhost refused to connect` on :5173, or DNS errors during build | Docker Desktop still owns the socket. Uninstall it, then `wsl --shutdown` and `sudo systemctl restart docker.socket docker`. |
+| Some cameras only load slowly, one at a time behind one NVR | normal: opens are paced per NVR (`NVR_OPEN_GAP_MS`, default 300 ms) so a weak NVR isn't flooded. |
 | Backend exits at boot with a Joi error | an optional key in `backend/.env` was left as `KEY=` — comment it out. |
 
 More: [09-troubleshooting.md](09-troubleshooting.md),

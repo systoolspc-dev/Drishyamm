@@ -27,9 +27,15 @@ export const ROTATE_OPTIONS = [
 // rebooted, and six was the ceiling every NVR was held to. Raised to nine on
 // 2026-09-21 (Anil: a 3 x 3 page must fill) once a tile cost one session, not
 // two (see SESSIONS_PER_CAMERA) - the office NVR had 16 sessions open that
-// day and coped. If a recorder starts dropping cameras again, this is the
-// first number to lower.
-export const NVR_PULL_LIMIT = 9;
+// day and coped. Raised to 36 on 2026-09-29 (Anil) so a 6 x 6 page fills.
+// NOTE: 36 is well past anything measured on these recorders - the July jam
+// was 17 pulls, and the highest count seen to cope was 16 sessions. Also,
+// Chrome runs out of simultaneous H.264 decoders around 16 (an 18-tile wall
+// rendered 16 and left 2 blank, a different 2 each reload), so tiles past
+// ~16 may show nothing even though the recorder is being pulled for them.
+// If a recorder starts dropping cameras again, this is the first number to
+// lower - 16 matches the observed-safe ceiling, 9 was the previous default.
+export const NVR_PULL_LIMIT = 36;
 
 // What one live tile costs its recorder: ONE RTSP session, the sub-stream it
 // plays. This was 2 while /stream/start also woke the camera's MAIN stream

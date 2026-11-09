@@ -26,7 +26,7 @@ const startStream = asyncHandler(async (req, res) => {
   // Absent/anything-else ⇒ false, so an old client keeps the transcoded path.
   const clientHevc = req.query.hevc === '1' || req.query.hevc === 'true';
 
-  const { webrtcUrl, hlsUrl, hlsSubUrl, provider, codec, transcoded } =
+  const { webrtcUrl, hlsUrl, hlsSubUrl, provider, codec, transcoded, mainOpen } =
     await streamService.startStream(camera, { quality, clientHevc });
 
   // Media-plane authorization (audit H9): only the owner reaches this point
@@ -57,6 +57,7 @@ const startStream = asyncHandler(async (req, res) => {
   const masterUrl = null;
 
   res.json({
+    mainOpen:  mainOpen || undefined,   // single view: why main was / wasn't served
     ok:        true,
     monitorId,
     webrtcUrl,          // primary — sub-500ms, WHEP protocol
@@ -243,4 +244,49 @@ const adminStartStream = asyncHandler(async (req, res) => {
   res.json({ ok: true, monitorId, webrtcUrl, hlsUrl, hlsSubUrl, codec, transcoded });
 });
 
-module.exports = { startStream, stopStream, getStreamStatus, getSnapshot, runWatchdog, getMasterPlaylist, verifyStreamAccess, adminStartStream };
+/**
+ * POST /api/stream/warm — renew the caller's warm lease (see streamWarm.service).
+ * Answers immediately; the camera starts run in the background, paced per NVR.
+ */
+const warmStreams = asyncHandler(async (req, res) => {
+  const { monitorIds, hevc } = req.body || {};
+  const result = await require('../services/streamWarm.service').touch(req.user.id, {
+    monitorIds: Array.isArray(monitorIds) ? monitorIds.slice(0, 50) : undefined,
+    hevc: hevc === true,
+  });
+  res.status(202).json(result);
+});
+
+/**
+ * One-time ticket for the live relay WebSocket (GET ws …/api/stream/live?ticket=).
+ * POST /api/stream/live/:monitorId/ticket?variant=sub|main&transcode=0|1
+ *
+ * Also makes sure the Stream Service path exists and starts the relay, so the
+ * stream warms up while the browser opens its socket. `transcode=1` is for
+ * browsers that cannot decode H.265: it serves the H.264 sidecar instead.
+ */
+const liveTicket = asyncHandler(async (req, res) => {
+  const { monitorId } = req.params;
+  const camera = await Camera.findOne({ where: { userId: req.user.id, monitorId } });
+  if (!camera) throw new AppError('Camera not found', 404);
+  const variant = req.query.variant === 'main' ? 'main' : 'sub';
+  const relay = require('../services/liveRelay.service');
+  let transcode = req.query.transcode === '1';
+  // The browser says whether it decodes H.265 (hevc=1|0). If it can't and we
+  // already know this camera sends H.265, go straight to the H.264 sidecar
+  // instead of making it discover that on a cold start.
+  if (!transcode && req.query.hevc === '0') {
+    const rawPath = await streamService.ensureLivePath(camera, { variant });
+    if (/^(hvc1|hev1)/.test(relay.codecOf(rawPath) || '')) transcode = true;
+  }
+  // Main has the right of way on the NVR's uplink (streamWarm.yieldForMain).
+  if (variant === 'main') {
+    require('../services/streamWarm.service').yieldForMain(camera).catch(() => {});
+  }
+  const path = await streamService.ensureLivePath(camera, { variant, transcode });
+  const nvrUrl = transcode ? null : streamService.liveNvrUrl(camera, variant);
+  const ticket = relay.issueTicket({ userId: req.user.id, monitorId, path, variant, nvrUrl });
+  res.json({ ticket, path, variant, transcode });
+});
+
+module.exports = { liveTicket, warmStreams, startStream, stopStream, getStreamStatus, getSnapshot, runWatchdog, getMasterPlaylist, verifyStreamAccess, adminStartStream };

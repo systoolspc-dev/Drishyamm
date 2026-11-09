@@ -23,12 +23,30 @@ const StreamingEngine = require('./StreamingEngine');
 const RECORD_PATH    = '/recordings/%path/%Y-%m-%d/%H-%M-%S-%f';
 const RECORD_SEGMENT = config.streamService.segmentDuration || '10m0s';
 
+// Accounts whose cameras record the MAIN stream continuously, as a comma-separated
+// list of user UUIDs. This exists so recording can be switched on for ONE tenant
+// without RECORD_CONTINUOUS=1 turning it on estate-wide — full-res continuous
+// recording across every camera is what knocked recorders offline before.
+//
+// Recording on the main path (not the sub) is deliberate: recordingSync's
+// syncCamera() scans /recordings/<pathName(monitorId)>, i.e. the main path's
+// directory, so only main-path segments are ever uploaded to S3.
+//
+// Empty (the default) → nobody records, exactly as before this change.
+const RECORD_USER_IDS = new Set(
+  (process.env.RECORD_USER_IDS || '').split(',').map((s) => s.trim()).filter(Boolean),
+);
+const recordsForAccount = (userId) => !!userId && RECORD_USER_IDS.has(userId);
+
 // Transient-failure retry for engine CONTROL calls (add/patch/delete path). A
 // brief engine blip during a delete would otherwise leave a path configured — a
 // zombie stream until the watchdog reconciles. Retries turn the common blip into
 // a non-event; the watchdog stays the last-resort safety net.
 const ENGINE_RETRIES    = 3;
 const ENGINE_BACKOFF_MS = [200, 600, 1500];
+
+// How long the MAIN (fullscreen) NVR pull is held after its last reader.
+const MAIN_SOURCE_CLOSE_AFTER = process.env.MAIN_SOURCE_CLOSE_AFTER || '30s';
 
 class StreamServiceEngine extends StreamingEngine {
   constructor() {
@@ -170,7 +188,11 @@ class StreamServiceEngine extends StreamingEngine {
     // Default on-demand: remote NVRs / office uplink can't sustain many
     // continuous full-res pulls. RECORD_CONTINUOUS=1 restores always-on 24/7
     // recording; SOURCE_ALWAYS_ON=1 keeps sources live without forcing record.
-    const continuous = process.env.RECORD_CONTINUOUS === '1';
+    // Per-account opt-in (RECORD_USER_IDS) OR the global RECORD_CONTINUOUS=1.
+    // camConfig.userId is supplied by both call sites (recordingSync's watchdog
+    // and stream.service); if it is ever absent this evaluates false, so the
+    // safe default is "do not record".
+    const continuous = process.env.RECORD_CONTINUOUS === '1' || recordsForAccount(camConfig.userId);
     const alwaysOn   = continuous || process.env.SOURCE_ALWAYS_ON === '1';
     const pathConfig = {
       source:                rtspUrl,
@@ -188,7 +210,13 @@ class StreamServiceEngine extends StreamingEngine {
       // we do NOT repeat the always-on config that once jammed a customer's
       // NVR (see addCameraSubStream). Bandwidth is not the constraint —
       // measured 0.5 Mbps main / 0.12 Mbps sub.
-      sourceOnDemandCloseAfter: process.env.SOURCE_CLOSE_AFTER || '5m',
+      //
+      // EXCEPT for main, which is only pulled for a fullscreen view and costs
+      // the customer's uplink several sub-streams' worth: held 5 min after
+      // every fullscreen it starved the grid on a ~2.7 Mbit/s site
+      // (2026-10-20). The transcoder already keeps it 60 s after the viewer
+      // leaves, so re-entering fullscreen soon after doesn't reconnect.
+      sourceOnDemandCloseAfter: MAIN_SOURCE_CLOSE_AFTER,
       sourceProtocol:        'tcp',     // TCP avoids UDP loss / FU-A fragmentation
       record:                continuous,
       recordPath:            RECORD_PATH,
@@ -197,7 +225,9 @@ class StreamServiceEngine extends StreamingEngine {
     };
 
     await this._putPath(name, pathConfig, { logLabel: 'camera path', fatal: true });
-    logger.info('DrishyamStreaming[stream-service]: camera path added', { name, host: camConfig.host });
+    logger.info('DrishyamStreaming[stream-service]: camera path added', {
+      name, host: camConfig.host, record: continuous, segment: RECORD_SEGMENT,
+    });
   }
 
   /** Remove a camera path (stops RTSP pull + recording). Returns true if gone. */
@@ -275,6 +305,25 @@ class StreamServiceEngine extends StreamingEngine {
   // ── Status queries ──────────────────────────────────────────────────────────
 
   /** Live runtime info for a single path, or null if absent / engine down. */
+  /**
+   * Bring an EXISTING main path's hold time in line with
+   * MAIN_SOURCE_CLOSE_AFTER: paths created before it changed keep 5 min. Only
+   * that one field is patched (a full re-PUT would reset retention), once per
+   * camera per process; an unchanged value is a no-op in Stream Service.
+   */
+  async ensureMainCloseAfter(monitorId) {
+    this._mainCloseAfterDone ||= new Set();
+    if (this._mainCloseAfterDone.has(monitorId)) return;
+    this._mainCloseAfterDone.add(monitorId);
+    try {
+      await this.api.patch(`/v3/config/paths/patch/${this.pathName(monitorId)}`, {
+        sourceOnDemandCloseAfter: MAIN_SOURCE_CLOSE_AFTER,
+      });
+    } catch (err) {
+      logger.debug('DrishyamStreaming[stream-service]: main close-after patch failed', { monitorId, error: err.message });
+    }
+  }
+
   async getPath(monitorId) {
     const name = this.pathName(monitorId);
     try {

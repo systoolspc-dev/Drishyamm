@@ -5,7 +5,7 @@
  *
  * Every time value is epoch ms, in the viewer's local time (same as model.js).
  */
-import { HOUR, MINUTE, atTime } from './model';
+import { DAY, HOUR, MINUTE, atTime } from './model';
 
 /**
  * How much footage one second of timelapse covers. "1 min" plays a minute of
@@ -30,14 +30,32 @@ export const SPEEDS = [0.5, 1, 2, 4];
 const CLIP_FALLBACK_MS = 15 * MINUTE;
 const CLIP_MAX_GAP_MS = HOUR;
 
+// Date-prefixed form (legacy): 2026-02-16T09-41-24.mp4
 const FILENAME_TIME = /(\d{4}-\d{2}-\d{2})[T_ ](\d{2})[-:](\d{2})[-:](\d{2})/;
+// Leading wall-clock time, no date (the live formats): the stitched clip
+// "17-48-57_to_17-50-00_1m.mp4" and the raw segment "17-48-57-123456.mp4".
+// The calendar day for these comes from the record's own `date` field.
+const FILENAME_HMS = /^(\d{2})-(\d{2})-(\d{2})/;
+// The end time a stitched clip carries: "..._to_17-50-00_...".
+const FILENAME_TO = /_to_(\d{2})-(\d{2})-(\d{2})/;
 
-/** When a recording starts: from its filename (2026-02-16T09-41-24.mp4), else its upload time. */
+/** When a recording starts: from its filename (local/IST wall-clock), else its upload time. */
 export function clipStart(rec) {
-  const m = rec?.filename?.match(FILENAME_TIME);
-  if (m) return atTime(m[1], `${m[2]}:${m[3]}:${m[4]}`);
+  const dt = rec?.filename?.match(FILENAME_TIME);
+  if (dt) return atTime(dt[1], `${dt[2]}:${dt[3]}:${dt[4]}`);
+  const hms = rec?.filename?.match(FILENAME_HMS);
+  if (hms && rec?.date) return atTime(rec.date, `${hms[1]}:${hms[2]}:${hms[3]}`);
   const uploaded = Date.parse(rec?.lastModified);
   return Number.isFinite(uploaded) ? uploaded - CLIP_FALLBACK_MS : null;
+}
+
+/** A stitched clip's exact end (absolute epoch ms) from its "_to_HH-MM-SS", else null. */
+export function clipEnd(rec, start) {
+  const m = rec?.filename?.match(FILENAME_TO);
+  if (!m || !rec?.date || start == null) return null;
+  let end = atTime(rec.date, `${m[1]}:${m[2]}:${m[3]}`);
+  if (end < start) end += DAY; // clip crossed midnight
+  return end;
 }
 
 /**
@@ -52,8 +70,12 @@ export function buildClips(recs, durations = {}) {
   return timed.map((c, i) => {
     const gap = timed[i + 1] ? timed[i + 1].start - c.start : Infinity;
     const estimate = gap > 0 && gap <= CLIP_MAX_GAP_MS ? gap : CLIP_FALLBACK_MS;
-    const measured = durations[c.rec.key];
-    return { key: c.rec.key, rec: c.rec, start: c.start, end: c.start + (measured ?? estimate) };
+    const measured = durations[c.rec.key];           // real length once the video metadata loads (ms)
+    const exactEnd = clipEnd(c.rec, c.start);         // exact end from the filename (absolute ms)
+    const end = measured != null ? c.start + measured
+      : exactEnd != null ? exactEnd
+      : c.start + estimate;
+    return { key: c.rec.key, rec: c.rec, start: c.start, end };
   });
 }
 

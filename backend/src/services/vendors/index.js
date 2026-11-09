@@ -220,13 +220,22 @@ function deriveSubPath(mainPath) {
 // families are supported today (the two dominant NVR stacks); others throw.
 
 const pad = (n) => String(n).padStart(2, '0');
-// Hikvision ISAPI: /Streaming/tracks/<ch>01?starttime=YYYYMMDDThhmmssZ (UTC)
+// Our DVRs are configured in IST and interpret the RTSP playback timestamp as
+// DEVICE-LOCAL time (the units ignore ISAPI's 'Z'/UTC marker), so UTC times
+// landed playback ~5.5h before the requested moment. Send IST wall-clock: shift
+// the UTC epoch by +5:30, then read the shifted date's UTC components. This is
+// TZ-independent (does not rely on the process timezone).
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+const istOf = (d) => new Date(d.getTime() + IST_OFFSET_MS);
+// Hikvision ISAPI: /Streaming/tracks/<ch>01?starttime=YYYYMMDDThhmmssZ (digits = IST device-local)
 function fmtHik(d) {
-  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+  const t = istOf(d);
+  return `${t.getUTCFullYear()}${pad(t.getUTCMonth() + 1)}${pad(t.getUTCDate())}T${pad(t.getUTCHours())}${pad(t.getUTCMinutes())}${pad(t.getUTCSeconds())}Z`;
 }
-// Dahua: /cam/playback?...&starttime=YYYY_MM_DD_hh_mm_ss (device-local; we send UTC)
+// Dahua: /cam/playback?...&starttime=YYYY_MM_DD_hh_mm_ss (IST device-local)
 function fmtDahua(d) {
-  return `${d.getUTCFullYear()}_${pad(d.getUTCMonth() + 1)}_${pad(d.getUTCDate())}_${pad(d.getUTCHours())}_${pad(d.getUTCMinutes())}_${pad(d.getUTCSeconds())}`;
+  const t = istOf(d);
+  return `${t.getUTCFullYear()}_${pad(t.getUTCMonth() + 1)}_${pad(t.getUTCDate())}_${pad(t.getUTCHours())}_${pad(t.getUTCMinutes())}_${pad(t.getUTCSeconds())}`;
 }
 
 const PLAYBACK_BUILDERS = {

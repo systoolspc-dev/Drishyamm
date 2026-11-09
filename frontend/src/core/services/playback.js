@@ -10,9 +10,13 @@ const token = () => {
 };
 
 export const playbackService = {
-  /** Start an on-demand replay; resolves { pathName, hlsUrl, webrtcUrl, range }. */
-  start({ monitorId, start, end }) {
-    return api.post('/playback/nvr/start', { monitorId, start, end }).then((r) => r.data);
+  /**
+   * Start an on-demand replay. Resolves { pathName, hlsUrl, webrtcUrl, range },
+   * or with `relay` (browsers that decode H.265) possibly { mode: 'relay',
+   * pathName, ticket }: the NVR's own stream over the live relay WebSocket.
+   */
+  start({ monitorId, start, end, relay = false, hevc = false }) {
+    return api.post('/playback/nvr/start', { monitorId, start, end, relay, hevc }).then((r) => r.data);
   },
 
   stop(pathName) {

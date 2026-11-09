@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import WebRTCPlayer from './WebRTCPlayer';
 import HLSPlayer from './HLSPlayer';
+import RelayPlayer from './RelayPlayer';
+import { relaySupported, forcedDecoder } from '@/core/services/liveRelay';
+
+// Live relay (camera's own stream over WebSocket, GOP cache, no transcode
+// where the device can decode it) is the default for WebRTC-mode surfaces.
+// VITE_LIVE_RELAY=0 turns it off; ?decoder=webrtc forces the old path.
+const RELAY_ON = import.meta.env.VITE_LIVE_RELAY !== '0';
 
 /**
  * DirectStreamPlayer — thin picker over the two protocol-specific players.
@@ -55,6 +62,12 @@ export default function DirectStreamPlayer({
 
   const useHls = resolvedMode === 'hls' || fellBack;
 
+  // Relay first; if it can't play here, one-way hand-off to WebRTC.
+  const [relayFailed, setRelayFailed] = useState(false);
+  useEffect(() => { setRelayFailed(false); }, [monitorId]);
+  const useRelay = RELAY_ON && !relayFailed && resolvedMode === 'webrtc'
+    && relaySupported() && forcedDecoder() !== 'webrtc';
+
   // `quality` belongs to BOTH players. It used to be handed to HLSPlayer only,
   // so every WebRTC surface silently dropped it and the backend applied its
   // 'auto' default — main channel, blocking transcode, ~10 s per call. Since
@@ -64,6 +77,10 @@ export default function DirectStreamPlayer({
     monitorId, quality, muted, controls, className, aiOverlay, digitalZoom,
     volumeToggle, protocolBadge, fit,
   };
+
+  if (useRelay) {
+    return <RelayPlayer {...common} onFallback={() => setRelayFailed(true)} />;
+  }
 
   if (useHls) {
     return <HLSPlayer {...common} qualityControl={qualityControl} />;

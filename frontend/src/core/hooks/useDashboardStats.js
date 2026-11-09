@@ -176,6 +176,15 @@ export function useDashboardStats() {
       freeBytes:       s.freeBytes       || 0,
       usedRatio:       s.usedRatio       || 0,
       recordingsRatio: s.recordingsRatio || 0,
+      // Per-account cloud (S3) usage against the 10 PB tier — this account's
+      // own recordings only. Present when the backend could reach the bucket.
+      cloud: s.cloud && s.cloud.enabled ? {
+        usedBytes: s.cloud.usedBytes || 0,
+        objects:   s.cloud.objects   || 0,
+        tierBytes: s.cloud.tierBytes || 0,
+        tierLabel: s.cloud.tierLabel || '',
+        usedRatio: s.cloud.usedRatio || 0,
+      } : null,
     } : null;
 
     return {

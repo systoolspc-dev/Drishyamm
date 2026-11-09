@@ -46,20 +46,20 @@ const ACTIONS = [
     feature: 'anpr', ai: true,
   },
   {
-    key: 'event', label: 'Investigate an Event', desc: 'Analyse AI detections',
-    icon: Radar, tint: ORANGE, to: '/event-logs',
+    key: 'event', label: 'Look back at a day', desc: 'What the cameras noticed',
+    icon: Radar, tint: ORANGE, to: '/event-logs', feature: 'event_log',
   },
   {
-    key: 'live', label: 'View Live Cameras', desc: 'Watch real-time feeds',
+    key: 'live', label: 'Watch live', desc: 'See your cameras now',
     icon: Video, tint: '#10b981', to: '/live',
   },
   {
-    key: 'footage', label: 'Search Footage', desc: 'Browse recorded video',
-    icon: PlayCircle, tint: '#06b6d4', to: '/playback',
+    key: 'footage', label: 'Recordings', desc: 'Watch what happened earlier',
+    icon: PlayCircle, tint: '#06b6d4', to: '/playback', featureAny: ['playback', 'cloud_recordings'],
   },
   {
-    key: 'alerts', label: 'View Alerts', desc: 'Check active alerts',
-    icon: AlertTriangle, tint: '#ef4444', to: '/alerts',
+    key: 'alerts', label: 'Alerts', desc: 'Things that need attention',
+    icon: AlertTriangle, tint: '#ef4444', to: '/alerts', feature: 'alerts',
   },
 ];
 
@@ -133,10 +133,10 @@ const EVERYDAY = {
   icon: Video,
   tint: '#64748b',
   items: [
-    { label: 'Live View',  desc: 'All cameras',    icon: Video,      to: '/live' },
-    { label: 'Playback',   desc: 'Find a moment',  icon: AlarmClock, to: '/playback' },
-    { label: 'Map',        desc: 'Sites on a map', icon: MapPin,     to: '/map', feature: 'map' },
-    { label: 'Add Camera', desc: 'Connect device', icon: Camera,     to: '/devices' },
+    { label: 'Watch live',  desc: 'All cameras',    icon: Video,      to: '/live' },
+    { label: 'Recordings',  desc: 'Find a moment',  icon: AlarmClock, to: '/playback', featureAny: ['playback', 'cloud_recordings'] },
+    { label: 'Map',         desc: 'Sites on a map', icon: MapPin,     to: '/map', feature: 'map' },
+    { label: 'Add cameras', desc: 'Connect device', icon: Camera,     to: '/devices', feature: 'camera_setup' },
   ],
 };
 
@@ -237,17 +237,17 @@ function Dropdown({ icon: Icon, label, options, value, onChange }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="inline-flex h-9 max-w-[170px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
+        className="inline-flex h-9 max-w-[170px] items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[12px] font-semibold text-slate-700 dark:text-fg-secondary transition hover:border-line-strong hover:bg-surface-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
       >
-        <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        <Icon className="h-3.5 w-3.5 shrink-0 text-fg-subtle" />
         <span className="truncate">{label}</span>
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-fg-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
         <ul
           role="listbox"
-          className="absolute right-0 z-30 mt-1.5 max-h-64 w-52 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+          className="absolute right-0 z-30 mt-1.5 max-h-64 w-52 overflow-y-auto rounded-lg border border-line bg-surface py-1 shadow-lg"
         >
           {options.map((opt) => (
             <li key={opt.value}>
@@ -256,8 +256,8 @@ function Dropdown({ icon: Icon, label, options, value, onChange }) {
                 role="option"
                 aria-selected={opt.value === value}
                 onClick={() => { onChange(opt.value); setOpen(false); }}
-                className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] font-medium transition hover:bg-slate-50 ${
-                  opt.value === value ? 'text-slate-900' : 'text-slate-600'
+                className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] font-medium transition hover:bg-surface-sunken ${
+                  opt.value === value ? 'text-fg' : 'text-fg-secondary'
                 }`}
               >
                 <span className="truncate">{opt.label}</span>
@@ -298,30 +298,30 @@ function DayPicker({ value, onChange }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[12px] font-semibold text-slate-700 dark:text-fg-secondary transition hover:border-line-strong hover:bg-surface-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
       >
-        <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        <CalendarDays className="h-3.5 w-3.5 shrink-0 text-fg-subtle" />
         <span className="truncate">{dayLabel(value)}</span>
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-fg-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
-        <div className="absolute right-0 z-30 mt-1.5 w-52 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+        <div className="absolute right-0 z-30 mt-1.5 w-52 rounded-lg border border-line bg-surface p-1 shadow-lg">
           {presets.map((opt) => (
             <button
               key={opt.value}
               type="button"
               onClick={() => { onChange(opt.value); setOpen(false); }}
-              className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] font-medium transition hover:bg-slate-50 ${
-                opt.value === value ? 'text-slate-900' : 'text-slate-600'
+              className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] font-medium transition hover:bg-surface-sunken ${
+                opt.value === value ? 'text-fg' : 'text-fg-secondary'
               }`}
             >
               <span className="truncate">{opt.label}</span>
               {opt.value === value && <Check className="h-3.5 w-3.5 shrink-0 text-[#F7983A]" />}
             </button>
           ))}
-          <label className="mt-1 block border-t border-slate-100 px-2.5 pb-1 pt-2">
-            <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">
+          <label className="mt-1 block border-t border-line-subtle px-2.5 pb-1 pt-2">
+            <span className="block text-[10px] font-bold uppercase tracking-wide text-fg-subtle">
               Pick a day
             </span>
             <input
@@ -329,7 +329,7 @@ function DayPicker({ value, onChange }) {
               value={value}
               max={todayKey()}
               onChange={(e) => { if (e.target.value) { onChange(e.target.value); setOpen(false); } }}
-              className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1 text-[12px] font-medium text-slate-700 outline-none focus:border-[#F7983A]"
+              className="mt-1 w-full rounded-md border border-line px-2 py-1 text-[12px] font-medium text-slate-700 dark:text-fg-secondary outline-none focus:border-[#F7983A]"
             />
           </label>
         </div>
@@ -344,7 +344,7 @@ function ActionCard({ action, onOpen }) {
     <button
       type="button"
       onClick={() => onOpen(action)}
-      className="group flex flex-col items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-4 text-center transition hover:-translate-y-0.5 hover:border-[#F7983A]/40 hover:shadow-[0_6px_20px_rgba(15,23,42,0.07)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
+      className="group flex flex-col items-center gap-2 rounded-xl border border-line bg-surface px-3 py-4 text-center transition hover:-translate-y-0.5 hover:border-[#F7983A]/40 hover:shadow-[0_6px_20px_rgba(15,23,42,0.07)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
     >
       <span
         className="flex h-10 w-10 items-center justify-center rounded-xl transition group-hover:scale-105"
@@ -352,8 +352,8 @@ function ActionCard({ action, onOpen }) {
       >
         <Icon className="h-[18px] w-[18px]" />
       </span>
-      <span className="block text-[13px] font-bold leading-tight text-slate-900">{action.label}</span>
-      <span className="block text-[11px] font-medium leading-tight text-slate-500">{action.desc}</span>
+      <span className="block text-[13px] font-bold leading-tight text-fg">{action.label}</span>
+      <span className="block text-[11px] font-medium leading-tight text-fg-muted">{action.desc}</span>
     </button>
   );
 }
@@ -365,7 +365,7 @@ function Pill({ item, tint, onOpen }) {
       type="button"
       onClick={() => onOpen(item.to)}
       title={item.desc}
-      className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition-colors duration-200 hover:border-[#F7983A]/50 hover:bg-[#F7983A]/5 hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
+      className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 text-[11px] font-semibold text-slate-700 dark:text-fg-secondary transition-colors duration-200 hover:border-[#F7983A]/50 hover:bg-[#F7983A]/5 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
     >
       <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: tint }} />
       <span className="truncate">{item.label}</span>
@@ -546,18 +546,18 @@ export default function DashboardQuickActions() {
   if (!actions.length && !toolGroups.length) return null;
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_4px_20px_rgba(15,23,42,0.04)]">
+    <section className="rounded-xl border border-line bg-surface p-5 shadow-[0_4px_20px_rgba(15,23,42,0.04)]">
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-[15px] font-bold text-slate-900">Quick actions</h2>
-        <span className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
+        <h2 className="text-[15px] font-bold text-fg">Quick actions</h2>
+        <span className="rounded-md bg-surface-muted px-2 py-1 text-[11px] font-medium text-fg-muted">
           Start an investigation or jump to a common task
         </span>
         {!!toolGroups.length && (
           <button
             type="button"
             onClick={() => setShowAllTools((v) => !v)}
-            className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 transition hover:text-slate-900"
+            className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-fg-muted transition hover:text-fg"
           >
             All tools
             <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showAllTools ? 'rotate-180' : ''}`} />
@@ -567,10 +567,10 @@ export default function DashboardQuickActions() {
 
       {/* ── Omnibox ────────────────────────────────────────────────────── */}
       <div ref={boxRef} className="relative mt-4">
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 transition focus-within:border-[#F7983A]/50 focus-within:bg-white focus-within:ring-2 focus-within:ring-[#F7983A]/10">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface-sunken/60 p-2.5 transition focus-within:border-[#F7983A]/50 focus-within:bg-surface focus-within:ring-2 focus-within:ring-[#F7983A]/10">
           <label htmlFor="qa-omnibox" className="flex min-w-[240px] flex-1 items-center gap-2.5 pl-2">
-            <Search className="h-4 w-4 shrink-0 text-slate-400" />
-            <span className="hidden shrink-0 text-[13px] font-bold text-slate-900 sm:inline">
+            <Search className="h-4 w-4 shrink-0 text-fg-subtle" />
+            <span className="hidden shrink-0 text-[13px] font-bold text-fg sm:inline">
               What are you looking for?
             </span>
             <input
@@ -586,7 +586,7 @@ export default function DashboardQuickActions() {
               role="combobox"
               aria-expanded={openSuggest && suggestions.length > 0}
               aria-controls="qa-suggestions"
-              className="h-9 min-w-0 flex-1 bg-transparent text-[13px] font-medium text-slate-900 outline-none placeholder:font-normal placeholder:text-slate-400"
+              className="h-9 min-w-0 flex-1 bg-transparent text-[13px] font-medium text-fg outline-none placeholder:font-normal placeholder:text-fg-subtle"
             />
           </label>
 
@@ -614,7 +614,7 @@ export default function DashboardQuickActions() {
           <ul
             id="qa-suggestions"
             role="listbox"
-            className="absolute left-0 right-0 z-30 mt-1.5 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(15,23,42,0.12)]"
+            className="absolute left-0 right-0 z-30 mt-1.5 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-[0_12px_32px_rgba(15,23,42,0.12)]"
           >
             {suggestions.map((s, i) => {
               const Icon = ROW_ICONS[s.iconKey] || Search;
@@ -627,7 +627,7 @@ export default function DashboardQuickActions() {
                     aria-selected={i === cursor}
                     onMouseEnter={() => setCursor(i)}
                     onClick={() => go(s)}
-                    className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition ${i === cursor ? 'bg-slate-50' : ''}`}
+                    className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition ${i === cursor ? 'bg-surface-sunken' : ''}`}
                   >
                     <span
                       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
@@ -636,10 +636,10 @@ export default function DashboardQuickActions() {
                       <Icon className="h-3.5 w-3.5" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12px] font-bold text-slate-900">{s.label}</span>
-                      <span className="block truncate text-[11px] font-medium text-slate-500">{s.hint}</span>
+                      <span className="block truncate text-[12px] font-bold text-fg">{s.label}</span>
+                      <span className="block truncate text-[11px] font-medium text-fg-muted">{s.hint}</span>
                     </span>
-                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-fg-disabled" />
                   </button>
                 </li>
               );
@@ -657,7 +657,7 @@ export default function DashboardQuickActions() {
 
       {/* ── All tools (the full, entitlement-filtered feature list) ─────── */}
       {showAllTools && !!toolGroups.length && (
-        <div className="mt-4 grid gap-x-6 gap-y-4 border-t border-slate-100 pt-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 grid gap-x-6 gap-y-4 border-t border-line-subtle pt-4 sm:grid-cols-2 xl:grid-cols-3">
           {toolGroups.map((g) => {
             const GroupIcon = g.icon;
             return (
@@ -670,8 +670,8 @@ export default function DashboardQuickActions() {
                     <GroupIcon className="h-3 w-3" />
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-[11px] font-bold text-slate-900">{g.job}</span>
-                    <span className="block text-[10px] font-medium text-slate-500">{g.why}</span>
+                    <span className="block text-[11px] font-bold text-fg">{g.job}</span>
+                    <span className="block text-[10px] font-medium text-fg-muted">{g.why}</span>
                   </span>
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -686,11 +686,11 @@ export default function DashboardQuickActions() {
       )}
 
       {/* ── Recent investigations ──────────────────────────────────────── */}
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
-        <span className="shrink-0 text-[12px] font-semibold text-slate-500">Recent investigations</span>
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line-subtle pt-4">
+        <span className="shrink-0 text-[12px] font-semibold text-fg-muted">Recent investigations</span>
 
         {recents.length === 0 ? (
-          <span className="text-[11px] font-medium text-slate-400">
+          <span className="text-[11px] font-medium text-fg-subtle">
             Searches you run from here show up on this list.
           </span>
         ) : (
@@ -704,12 +704,12 @@ export default function DashboardQuickActions() {
                   type="button"
                   onClick={() => { setOpenSuggest(false); navigate(r.to); }}
                   title={r.hint || r.label}
-                  className="inline-flex max-w-[260px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-left transition hover:border-[#F7983A]/40 hover:bg-[#F7983A]/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
+                  className="inline-flex max-w-[260px] items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left transition hover:border-[#F7983A]/40 hover:bg-[#F7983A]/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F7983A]"
                 >
                   <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: tint }} />
                   <span className="min-w-0">
-                    <span className="block truncate text-[11px] font-bold leading-tight text-slate-900">{r.label}</span>
-                    <span className="block truncate font-mono text-[10px] leading-tight text-slate-400">
+                    <span className="block truncate text-[11px] font-bold leading-tight text-fg">{r.label}</span>
+                    <span className="block truncate font-mono text-[10px] leading-tight text-fg-subtle">
                       {[r.meta, relativeTime(r.at)].filter(Boolean).join(' · ')}
                     </span>
                   </span>

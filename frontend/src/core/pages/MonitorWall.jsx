@@ -102,11 +102,11 @@ export default function MonitorWall({ initialLayoutId = null, initialDraft = nul
       setBaseline(d);
     } else if (pick.length) {
       const side = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(pick.length))));
-      let d = M.newDraft({ name: 'From Live View', cols: side, rows: side });
+      let d = M.newDraft({ name: 'From Watch live', cols: side, rows: side });
       for (const id of pick) d = M.addCamera(d, id, 0).draft;
       setDraft(d);
       setBaseline(null);
-      flash(`Loaded ${pick.length} camera${pick.length === 1 ? '' : 's'} from Live View`, local ? () => restore(local) : null);
+      flash(`Loaded ${pick.length} camera${pick.length === 1 ? '' : 's'} from Watch live`, local ? () => restore(local) : null);
     } else if (local) {
       restore(local);
     } else if (layouts.length) {

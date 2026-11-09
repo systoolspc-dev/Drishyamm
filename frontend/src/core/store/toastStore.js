@@ -179,7 +179,7 @@ export function mergeCameraStatus(prev, next) {
     chips: chipNames(cameras),
     foot: back
       ? { icon: 'check', text: 'Streaming again' }
-      : { icon: 'alert', text: shared ? offlineReasonShort(shared.reason, shared.reasonCode) : 'Different reasons — see Camera Health' },
+      : { icon: 'alert', text: shared ? offlineReasonShort(shared.reason, shared.reasonCode) : 'Different reasons — see Camera status' },
     data: { cameras },
   };
 }

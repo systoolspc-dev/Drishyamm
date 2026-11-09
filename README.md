@@ -15,10 +15,11 @@ out and why: [docs/SNAPSHOT_NOTES.md](docs/SNAPSHOT_NOTES.md).
 ## Quick start
 
 ```bash
-git lfs install                      # weights + demo videos are LFS (see .gitattributes)
-cp .env.example .env                 # set SERVICE_TOKEN (and HOST_IP for LAN access)
-cp backend/.env.example backend/.env # set JWT_SECRET / JWT_REFRESH_SECRET
+git lfs install && git lfs pull      # weights + demo videos are LFS (see .gitattributes)
+cp .env.example .env                 # SERVICE_TOKEN=$(openssl rand -hex 32), HOST_IP for LAN access
+cp backend/.env.example backend/.env # JWT_SECRET / JWT_REFRESH_SECRET / CAMERA_CRED_KEY
 docker compose up -d --build         # first build ≈ 15-30 min, first AI boot ≈ 5 min
+# smaller GPU / UI only: docker compose up -d mysql redis stream-service smart-cam-backend smart-cam-app
 
 docker compose exec -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='choose-a-strong-one' \
   smart-cam-backend node scripts/create-admin.js
@@ -26,7 +27,18 @@ docker compose exec -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='choose-a-s
 
 Open **http://localhost:5173**, sign in, add a camera (or `--profile demo`
 for a looped test camera). Full walkthrough, prerequisites and production
-hardening: **[docs/SETUP.md](docs/SETUP.md)**.
+hardening: **[docs/SETUP.md](docs/SETUP.md)**. On Windows, use Docker Engine
+inside WSL2 Ubuntu, not Docker Desktop (step-by-step in SETUP.md §1).
+
+MinIO runs from `bitnamilegacy/minio:2024.10.13` because the official
+`minio/minio` image can no longer be pulled. It's already set in
+`docker-compose.yml`, so there's nothing to do.
+
+| URL | What |
+|---|---|
+| http://localhost:5173 | operator console (`/admin` for the platform console) |
+| http://localhost:5000/api/health/live | backend health |
+| http://localhost:9001 | MinIO console |
 
 ## Layout
 
@@ -82,8 +94,8 @@ Service directly. Details: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
 
 * NVIDIA GPU (Turing or newer; developed on an RTX PRO 5000 Blackwell) with a
   driver that supports CUDA 12.8.
-* Docker with GPU support: Docker Desktop + WSL2 on Windows, or Docker Engine
-  + NVIDIA Container Toolkit on Linux. Compose ≥ 2.24.
+* Docker Engine + NVIDIA Container Toolkit (on Windows: inside WSL2 Ubuntu;
+  Docker Desktop + WSL2 also works but don't run both). Compose ≥ 2.24.
 * ~40 GB disk for images and models, plus recording storage.
 * Git LFS if you push this folder to a Git host (several files > 100 MB).
 

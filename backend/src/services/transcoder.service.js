@@ -12,8 +12,11 @@
  * ----------
  *   • Encoder auto-detection — picks h264_nvenc, h264_qsv, or h264_amf
  *     when available (5-10× lower CPU than libx264). Falls back cleanly.
- *   • Source-readiness gate — never spawns FFmpeg against a path that
- *     has no RTSP frames flowing (saves wasted CPU and noisy logs).
+ *   • No source-readiness gate — FFmpeg is the on-demand source's reader, so
+ *     spawning it is what makes Stream Service start the NVR pull. Waiting for
+ *     the source to be ready first deadlocked fire-and-forget callers (see
+ *     ensurePathTranscoder). A source that never comes up makes FFmpeg exit;
+ *     the restart backoff + MAX_RESTARTS bound that.
  *   • Stall detection — kills + restarts FFmpeg if no frame counter
  *     update for STALL_TIMEOUT_MS (sometimes ffmpeg "lives" but doesn't
  *     produce output after a source glitch).
@@ -45,6 +48,11 @@ const queues    = require('../queues');
 // monitorId → { proc, startedAt, restartCount, sourceUrl, targetUrl,
 //               lastFrameAt, idleSince }
 const _processes = new Map();
+// processKey → epoch ms until which idle shutdown is suspended. Set by the
+// warm-keeper (streamWarm.service) while a user of the camera is logged in, so
+// a tile opened later finds its stream already running (~0.3 s to first frame
+// instead of a cold NVR pull + ffmpeg start).
+const _pinnedUntil = new Map();
 
 const TRANSCODED_SUFFIX = '_h264';
 const SUB_TRANSCODED_SUFFIX = '_sub_h264';
@@ -65,6 +73,80 @@ const STALL_TIMEOUT_MS  = parseInt(process.env.TRANSCODER_STALL_MS, 10)  || 30_0
 const IDLE_TIMEOUT_MS   = parseInt(process.env.TRANSCODER_IDLE_MS, 10)   || 60_000;
 const HEALTH_CHECK_MS   = parseInt(process.env.TRANSCODER_CHECK_MS, 10)  || 15_000;
 const MAX_CONCURRENT    = parseInt(process.env.TRANSCODER_MAX, 10)       || 8;
+
+// ── Per-NVR connection pacing ────────────────────────────────────────────────
+// Every transcoder whose source is not already flowing makes Stream Service
+// open a NEW RTSP session to the customer's NVR. Opened in a burst (a wall page
+// of 9 tiles + the warm-keeper, or every camera restarting at once after a
+// drop), the customer's network blocks port 554 for 20–60 s: measured
+// 2026-10-20 — 8 opens in 0.1 s at 05:10:13 → unreachable at 05:10:18; 14 opens
+// in 1 s at 05:16:36 → unreachable at 05:16:57. Every session then drops, all
+// restart together, and the next burst re-arms the block: tiles sat on
+// "Connecting" for minutes. So new sessions on one NVR are spaced
+// NVR_OPEN_GAP_MS apart, and none are opened while the NVR is unreachable.
+// 300 ms = ~3 opens/s per NVR. The blocks above came from 8 in 0.1 s and 14 in
+// 1 s; the warm-keeper's 0.3 s stagger never tripped one.
+const NVR_OPEN_GAP_MS     = parseInt(process.env.NVR_OPEN_GAP_MS, 10) || 300;
+const NVR_DOWN_WAIT_MS    = parseInt(process.env.NVR_DOWN_WAIT_MS, 10) || 60_000;
+const _nvrHostOf    = new Map(); // monitorId → NVR host
+const _nvrQueues    = new Map(); // host → { waiting: [], lastAt, timer }
+const _opening      = new Map(); // processKey → in-flight ensure promise
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let _nvrSeq = 0;
+
+// Open priorities: what someone is looking at goes first.
+const OPEN_PRIORITY = { main: 0, view: 1, warm: 2 };
+
+async function nvrHostOf(monitorId) {
+  if (_nvrHostOf.has(monitorId)) return _nvrHostOf.get(monitorId);
+  try {
+    const { Camera } = require('../models');
+    const cam = await Camera.findOne({ where: { monitorId }, attributes: ['host'] });
+    const host = cam?.host || null;
+    _nvrHostOf.set(monitorId, host);
+    return host;
+  } catch (_) {
+    return null;
+  }
+}
+
+function serveNvrQueue(host) {
+  const q = _nvrQueues.get(host);
+  if (!q || q.timer || !q.waiting.length) return;
+  const wait = Math.max(0, q.lastAt + NVR_OPEN_GAP_MS - Date.now());
+  q.timer = setTimeout(() => {
+    q.timer = null;
+    q.waiting.sort((x, y) => x.prio - y.prio || x.seq - y.seq);
+    const next = q.waiting.shift();
+    if (next) { q.lastAt = Date.now(); next.resolve(); }
+    serveNvrQueue(host);
+  }, wait);
+}
+
+/**
+ * Wait for this camera's turn to open a new NVR session: one per
+ * NVR_OPEN_GAP_MS per NVR, highest priority first (OPEN_PRIORITY: a
+ * fullscreen main, then tiles on screen, then warm-keeper/prefetch).
+ * `ticket` (optional object) receives `bump(prio)` so a queued background
+ * open can be promoted when a viewer arrives for it.
+ */
+async function paceNvrOpen(monitorId, { urgent = false, priority, ticket } = {}) {
+  const host = await nvrHostOf(monitorId);
+  if (!host) return;
+  const reach = require('./cameraReachability.service');
+  const giveUpAt = Date.now() + NVR_DOWN_WAIT_MS;
+  while (reach.isReachable(host) === false && Date.now() < giveUpAt) await sleep(2000);
+
+  let q = _nvrQueues.get(host);
+  if (!q) { q = { waiting: [], lastAt: 0, timer: null }; _nvrQueues.set(host, q); }
+  const prio = urgent ? OPEN_PRIORITY.main : (priority ?? OPEN_PRIORITY.view);
+  await new Promise((resolve) => {
+    const w = { prio, seq: _nvrSeq++, resolve };
+    if (ticket) ticket.bump = (p) => { if (p < w.prio) w.prio = p; };
+    q.waiting.push(w);
+    serveNvrQueue(host);
+  });
+}
 const ALLOW_HW_ENCODERS = process.env.TRANSCODER_ALLOW_HW === 'true';
 
 // ── Encoder auto-detection ───────────────────────────────────────────────────
@@ -164,6 +246,14 @@ async function demoteEncoder() {
 
 // ── FFmpeg arg builder ───────────────────────────────────────────────────────
 
+// Input probing. Stream Service hands FFmpeg an SDP that already carries the
+// codec parameters, so FFmpeg does not need its default ~5 s / 5 MB probe
+// before it starts decoding; 0.5 s is enough to find the first frames.
+const PROBE_ARGS = [
+  '-probesize',       process.env.TRANSCODER_PROBESIZE || '500000',
+  '-analyzeduration', process.env.TRANSCODER_ANALYZE_US || '500000',
+];
+
 function buildFfmpegArgs(sourceUrl, targetUrl, encoderArgs, { lowProfile = false } = {}) {
   // GOP / keyframe interval — single source of truth for ALL encoders (these
   // args come after ...encoderArgs, so they override any -g a HW encoder set).
@@ -173,16 +263,26 @@ function buildFfmpegArgs(sourceUrl, targetUrl, encoderArgs, { lowProfile = false
   // assume the system-standard fps (main ~25, low 12); at other source fps the
   // GOP lands close to 1s, which is fine for surveillance. Cost: ~10-15% more
   // bitrate than a 2s GOP — the deliberate trade for snappy, smooth playback.
+  // The 360p grid stream is tiny: libx264 ultrafast encodes it with plenty of
+  // headroom and gets the first frame out sooner than veryfast.
+  const fastestSw = lowProfile && encoderArgs.includes('libx264') ? ['-preset', 'ultrafast'] : [];
   const profileArgs = lowProfile
     ? [
+        ...fastestSw,
         '-vf', 'scale=-2:360,fps=12',
         '-b:v', '450k',
         '-maxrate', '550k',
         '-bufsize', '900k',
-        '-g', '12',          // 1s GOP @ 12fps (was 24 = 2s)
-        '-keyint_min', '12',
+        // 0.5 s GOP @ 12 fps (was 12 = 1 s, before that 24 = 2 s). A new
+        // viewer's first frame waits for the next keyframe, so this halves the
+        // worst case of every tile start; at 360p the extra I-frames cost little.
+        '-g', '6',
+        '-keyint_min', '6',
       ]
     : [
+        // Cap at 1080p: some NVR channels are 3200x1800, which costs ~3x the
+        // encode of 1080p for no visible gain in a browser tile/fullscreen.
+        '-vf', "scale=-2:'min(1080,ih)'",
         '-g', '25',          // ~1s GOP @ 25fps (was effectively 50 = 2s)
         '-keyint_min', '25',
       ];
@@ -190,10 +290,20 @@ function buildFfmpegArgs(sourceUrl, targetUrl, encoderArgs, { lowProfile = false
   return [
     // ── Input ──
     '-rtsp_transport', 'tcp',
-    '-fflags',         '+genpts+discardcorrupt+nobuffer',
+    // No +nobuffer: it drops the packets read during probing, i.e. the
+    // source's first keyframe, so ffmpeg waited a whole camera GOP (3.3 s)
+    // before its first frame (see liveRelay.service.js).
+    '-fflags',         '+genpts+discardcorrupt',
     '-flags',          'low_delay',
     '-avoid_negative_ts', 'make_zero',
+    ...PROBE_ARGS,
     '-i',              sourceUrl,
+    // Map the video explicitly. Auto-mapping skips a stream whose size the
+    // short probe did not see yet (H.265 before its first keyframe:
+    // "Video: hevc, none") and ffmpeg then quits with "Output file #0 does not
+    // contain any stream" — 10 of ~90 restarts on 2026-10-20. Mapped, the
+    // filters are configured from the first decoded frame instead.
+    '-map',            '0:v:0',
 
     // ── Video transcode ──
     ...encoderArgs,
@@ -202,8 +312,10 @@ function buildFfmpegArgs(sourceUrl, targetUrl, encoderArgs, { lowProfile = false
     ...profileArgs,
     '-sc_threshold', '0',     // no scene-cut keyframes (predictable GOP)
 
-    // ── Audio: drop ──
-    '-an',
+    // ── Audio: pass the camera's G.711 through (the live relay turns it into
+    // AAC for the browser). `?`: a camera without audio just has none.
+    '-map',      '0:a:0?',
+    '-c:a',      'copy',
 
     // ── Output ──
     '-f',                'rtsp',
@@ -289,10 +401,23 @@ async function transcodedPathReaders(targetPath) {
  *
  * Reasons we may reject:
  *   • 'already-running' — current process is alive
- *   • 'source-not-ready' — RTSP source path is ready=false
  *   • 'capacity' — at MAX_CONCURRENT cap
  */
-async function ensurePathTranscoder(monitorId, {
+async function ensurePathTranscoder(monitorId, opts = {}) {
+  // Coalesce concurrent requests for the same camera+variant: the spawn now
+  // waits for its NVR slot, and a second caller arriving meanwhile must not
+  // start a second ffmpeg (and a second NVR session).
+  const key = processKey(monitorId, opts.variant || 'main');
+  const inflight = _opening.get(key);
+  if (inflight) {
+    return inflight.then((r) => (r.spawned ? { spawned: false, reason: 'already-running' } : r));
+  }
+  const p = spawnPathTranscoder(monitorId, opts).finally(() => _opening.delete(key));
+  _opening.set(key, p);
+  return p;
+}
+
+async function spawnPathTranscoder(monitorId, {
   variant = 'main',
   sourcePath = `cam_${monitorId}`,
   targetPath = transcodedPathName(monitorId),
@@ -313,13 +438,17 @@ async function ensurePathTranscoder(monitorId, {
     return { spawned: false, reason: 'capacity' };
   }
 
-  // Don't waste CPU on a source that has no frames — FFmpeg will just
-  // hang trying to read RTSP and emit "Connection timed out" warnings.
-  const ready = await isSourcePathReady(sourcePath);
-  if (!ready) {
-    logger.debug('transcoder: source not ready, deferring spawn', { monitorId, variant, sourcePath });
-    return { spawned: false, reason: 'source-not-ready' };
-  }
+  // Spawn even when the source isn't `ready` yet. The sources are on-demand:
+  // FFmpeg's RTSP read is what makes Stream Service open the NVR session, and
+  // Stream Service holds that read until the first frames arrive. The old gate
+  // returned 'source-not-ready' here, and grid tiles request transcoders
+  // fire-and-forget, so nobody retried: the tile 404'd until the player gave up
+  // and called /stream/start again (≈2 WHEP 404s and 1.6 start calls per tile
+  // in the 2026-10-19 baseline). Logged so a slow source is still visible.
+  const sourceReady = await isSourcePathReady(sourcePath);
+  // A source that is not flowing yet means a new NVR session: wait our turn.
+  if (!sourceReady) await paceNvrOpen(monitorId, { urgent: variant === 'main' });
+  else await nvrHostOf(monitorId); // cached; runningOnHost() needs every camera's host
 
   const { args: encoderArgs } = await detectEncoder();
 
@@ -395,7 +524,11 @@ async function ensurePathTranscoder(monitorId, {
       return;
     }
 
-    const tail = (e?.stderrTail || '').split('\n').filter(Boolean).slice(-4).join(' | ');
+    // Skip libx264's end-of-run statistics and progress lines: they fill the
+    // last lines and hide the actual reason (input EOF, RTSP error, …).
+    const tail = (e?.stderrTail || '').split(/[\r\n]+/)
+      .filter((l) => l && !/^\[libx264 @|^frame=|^\s*$/.test(l))
+      .slice(-6).join(' | ');
     logger.warn('transcoder: ffmpeg exited unexpectedly', {
       monitorId, variant, code, signal, uptimeMs, restarts, encoder: _encoderName, tail,
     });
@@ -452,7 +585,7 @@ async function ensurePathTranscoder(monitorId, {
   });
 
   logger.info('transcoder: spawned', {
-    monitorId, variant, encoder: _encoderName, source: sourceUrl, target: targetUrl,
+    monitorId, variant, encoder: _encoderName, source: sourceUrl, target: targetUrl, sourceReady,
   });
   return { spawned: true, reason: 'ok' };
 }
@@ -517,7 +650,8 @@ async function runHealthCheck() {
     //    a transcoder before Stream Service even sees its first publish.
     if (now - entry.startedAt < MIN_UPTIME_MS * 2) continue;
 
-    const readers = await transcodedPathReaders(entry.targetPath);
+    const pinned = (_pinnedUntil.get(processKey(entry.monitorId, entry.variant)) || 0) > now;
+    const readers = pinned ? 1 : await transcodedPathReaders(entry.targetPath);
     if (readers > 0) {
       entry.idleSince = null;
       continue;
@@ -594,6 +728,39 @@ function stopTranscoder(monitorId) {
     if (stopDeliberately(entry)) stopped = true;
   }
   return stopped;
+}
+
+/** Stop one variant on purpose (no auto-restart) and drop its pin. */
+function stopVariant(monitorId, variant) {
+  const key = processKey(monitorId, variant);
+  _pinnedUntil.delete(key);
+  const entry = _processes.get(key);
+  return entry ? stopDeliberately(entry) : false;
+}
+
+/** Running transcoders on one NVR host, from the host cache paceNvrOpen fills. */
+function runningOnHost(host) {
+  const out = [];
+  for (const e of _processes.values()) {
+    if (!e.proc || e.proc.killed || e.proc.exitCode != null || e.stopping) continue;
+    if (_nvrHostOf.get(e.monitorId) === host) out.push({ monitorId: e.monitorId, variant: e.variant, targetPath: e.targetPath });
+  }
+  return out;
+}
+
+/** Keep a transcoder alive with no viewers until `untilMs` (see _pinnedUntil). */
+function pinTranscoder(monitorId, variant, untilMs) {
+  _pinnedUntil.set(processKey(monitorId, variant), untilMs);
+}
+
+/** Running transcoders vs MAX_CONCURRENT, so callers can leave room for viewers. */
+function capacity() {
+  return { active: activeCount(), max: MAX_CONCURRENT };
+}
+
+function isRunning(monitorId, variant = 'main') {
+  const entry = _processes.get(processKey(monitorId, variant));
+  return !!(entry && entry.proc && !entry.proc.killed && entry.proc.exitCode == null && !entry.stopping);
 }
 
 function hasTranscoder(monitorId) {
@@ -694,6 +861,14 @@ module.exports = {
   ensureLowTranscoder: ensureLowTranscoderWithHealth,
   requestTranscode,
   stopTranscoder,
+  stopVariant,
+  runningOnHost,
+  nvrHostOf,
+  paceNvrOpen,
+  OPEN_PRIORITY,
+  pinTranscoder,
+  capacity,
+  isRunning,
   hasTranscoder,
   stopAll,
   listActive,

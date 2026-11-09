@@ -95,7 +95,7 @@ function Frame({ children }) {
  */
 export function NoCamerasOnboarding({
   title = 'No cameras configured',
-  description = 'Add cameras from Camera Setup to get started.',
+  description = 'Add your cameras to get started.',
   benefits,
   canSetup = true,
   secondaryAction,

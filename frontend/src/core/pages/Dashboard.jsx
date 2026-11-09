@@ -533,7 +533,7 @@ export default function Dashboard() {
   // Account switches: a card or button never leads to a page this account
   // does not have (it would only bounce back here).
   const user         = useAuthStore((s) => s.user);
-  const { has }      = makeEntitlement(user);
+  const { has, aiOn } = makeEntitlement(user);
   const goIf         = (key, to) => (has(key) ? () => navigate(to) : undefined);
 
   const [hourRange, setHourRange] = useState(HOUR_RANGES[0]);
@@ -649,7 +649,10 @@ export default function Dashboard() {
       : { label: 'Healthy',  tone: 'success', sub: 'All systems operational' };
 
   const onlinePct = stats.cameras ? Math.round((stats.online / stats.cameras) * 100) : 0;
-  const storageCritical = Boolean(stats.storage && stats.storage.usedRatio > 0.85);
+  // Per-account cloud usage (this account's recordings in the 10 PB tier) —
+  // not the server's disk, which is shared by every customer (prod 2026-10-15).
+  const cloud = (stats.storage && stats.storage.cloud) || null;
+  const storageCritical = Boolean(cloud && cloud.usedRatio > 0.85);
 
   return (
     <div className="min-h-[var(--app-vh)] bg-surface-app page-inset text-fg">
@@ -657,6 +660,7 @@ export default function Dashboard() {
           in the global Navbar, so the page opens straight on the actions. */}
 
       <HomeActions has={has} navigate={navigate} />
+
 
       {/* ── Metric cards (real numbers from useDashboardStats) ─────────── */}
       <MetricGrid cols={6} className="mb-5">
@@ -667,12 +671,15 @@ export default function Dashboard() {
           sub={`${onlinePct}% online`}
           onClick={goIf('camera_health', '/health')}
         />
-        <MetricCard
-          icon={Sparkles} tone="brand"
-          label="Detections today" value={stats.loading ? '—' : stats.eventsToday}
-          sub={`${stats.detectionMix.match} recognised · ${stats.detectionMix.unknown} unknown`}
-          onClick={goIf('alerts', '/alerts')}
-        />
+        {/* Detections only exist with the AI+VMS plan. */}
+        {aiOn && (
+          <MetricCard
+            icon={Sparkles} tone="brand"
+            label="Detections today" value={stats.loading ? '—' : stats.eventsToday}
+            sub={`${stats.detectionMix.match} recognised · ${stats.detectionMix.unknown} unknown`}
+            onClick={goIf('alerts', '/alerts')}
+          />
+        )}
         <MetricCard
           icon={ShieldAlert} tone="danger"
           label="Alerts today" value={stats.loading ? '—' : stats.alertsActive}
@@ -687,12 +694,12 @@ export default function Dashboard() {
           onClick={goIf('camera_setup', '/sites')}
         />
         <MetricCard
-          icon={HardDrive} tone={storageCritical ? 'danger' : 'ai'}
-          label="Storage Used"
-          value={stats.storage ? fmtBytes(stats.storage.usedBytes) : null}
-          sub={stats.storage
-            ? `${fmtBytes(stats.storage.freeBytes)} free · ${Math.round(stats.storage.usedRatio * 100)}% used`
-            : 'Not available'}
+          icon={HardDrive} tone={storageCritical ? 'danger' : 'info'}
+          label="Cloud Storage"
+          value={cloud ? fmtBytes(cloud.usedBytes) : (stats.storage ? fmtBytes(stats.storage.usedBytes) : null)}
+          sub={cloud
+            ? `of ${cloud.tierLabel || fmtBytes(cloud.tierBytes)} · ${cloud.objects.toLocaleString()} clip${cloud.objects === 1 ? '' : 's'}`
+            : (stats.storage ? 'Cloud usage unavailable' : 'Not available')}
           alert={storageCritical}
         />
         <MetricCard
@@ -913,6 +920,8 @@ export default function Dashboard() {
           third of both cards sat empty while the activity list set the height.
           The headers are deliberately identical — title, one context line, one
           action — so the three read as one row rather than three widgets. */}
+      {/* AI analytics only exist with the AI+VMS plan. */}
+      {aiOn && (
       <div className="grid gap-5 xl:grid-cols-3">
         <Card className="flex flex-col p-4">
           <div className="mb-4 flex items-center justify-between gap-2">
@@ -987,6 +996,7 @@ export default function Dashboard() {
           )}
         </Card>
       </div>
+      )}
     </div>
   );
 }

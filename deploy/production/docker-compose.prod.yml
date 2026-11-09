@@ -1,0 +1,466 @@
+# Production compose as running on the server (/data/build/docker-compose.prod.yml,
+# snapshot 2026-11-09). Secrets replaced with ${VAR} references - set them in .env.
+# ============================================================================
+# Drishyam VMS — PRODUCTION compose for 103.109.7.36 (IP access, HTTP)
+#   - Prebuilt protected images (no source bind mounts, no build context)
+#   - Managed named volumes on the NVMe docker data-root (/data/docker)
+#   - GPU via runtime: nvidia (registered on host, verified)
+#   - Only browser/camera-facing ports published; all datastores stay on the
+#     internal compose network (not reachable from the public interface).
+#   - Stream URLs handed to the browser point at the public IP, not localhost.
+# ============================================================================
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: drisyam-original-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: drishyamvms
+      MYSQL_ALLOW_EMPTY_PASSWORD: "${MYSQL_ALLOW_EMPTY_PASSWORD:?set in .env}"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: drisyam-original-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: drisyam-original-ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vms
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set in .env}"
+      POSTGRES_DB: vms_face
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vms -d vms_face"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: drisyam-original-ai-qdrant
+    restart: unless-stopped
+    # RocksDB opens many segment files; the default 1024 fd limit → "Too many
+    # open files" → Qdrant stops accepting connections → the AI crash-loops.
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  minio:
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    container_name: drisyam-original-ai-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?set in .env}"
+    command: server /data --console-address ":9001"
+    # HARDENED: no host port published. MinIO is internal-only (default creds are
+    # no longer internet-reachable). The browser never resolved minio:9000 anyway;
+    # if snapshot thumbnails are needed publicly, add an nginx /minio proxy later.
+    volumes:
+      - minio-data:/data
+
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: drisyam-original-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  # ── Drishyam Stream Service (branded media gateway) ────────────────────────
+  stream-service:
+    image: drishyam/stream-service:prod
+    container_name: drisyam-original-stream-service
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - mediamtx
+    ports:
+      - "8554:8554"        # RTSP
+      - "8555:8555"        # RTSPS (TLS firewall bypass)
+      - "8898:8888"        # HLS (public)
+      - "8889:8889"        # WebRTC / WHEP (public)
+      - "8189:8189/udp"    # WebRTC ICE (public — required for remote WebRTC)
+      - "8890:8890/udp"    # RTP
+    environment:
+      # Clip filenames come from MediaMTX's recordPath %H-%M-%S, so its clock
+      # decides the timestamps operators see. IST has no DST, so wall-clock
+      # filenames are unambiguous.
+      TZ: Asia/Kolkata
+    volumes:
+      - ./stream-service.yml:/mediamtx.yml:ro
+      - ./rtsps-cert.pem:/rtsps-cert.pem:ro
+      - ./rtsps-key.pem:/rtsps-key.pem:ro
+      - /data/recordings:/recordings
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ── Backend (Express / Sequelize) ─────────────────────────────────────────
+  smart-cam-backend:
+    image: drishyam/backend:prod-20261109-94ddf43
+    container_name: drisyam-original-backend
+    restart: unless-stopped
+    volumes:
+      # storage.service.js does df+du on /recordings, and recordingSync reads
+      # the MP4 segments here to upload them to S3 then unlinks them. Without
+      # this bind the backend reported 0 B and never synced. Same source dir
+      # the stream-service writes to.
+      - /data/recordings:/recordings
+    env_file:
+      - ./smart-cam-backend/.env
+    command: ["sh", "-c", "npx sequelize-cli db:migrate && (npx sequelize-cli db:seed:all || true) && node src/server.js"]
+    environment:
+      TZ: Asia/Kolkata
+      PORT: 5000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: drishyamvms
+      DB_USER: root
+      DB_PASSWORD: ""
+      REDIS_URL: redis://redis:6379
+      AI_SERVICE_URL: http://smart-cam-ai:8001
+      PERSON_TRACKER_SERVICE_TOKEN: ${PERSON_TRACKER_SERVICE_TOKEN:-change-me-please-32-chars-minimum}
+      STREAM_SERVICE_API_URL: http://stream-service:9997
+      STREAM_SERVICE_INTERNAL_HLS_URL: http://stream-service:8888
+      # SAME-ORIGIN relative paths handed to the browser: the app's nginx proxies
+      # /hls → stream-service:8888 and /whep → :8889. Relative means the URLs work
+      # unchanged over http://<ip> AND https://demo.indyatools.com (no mixed content).
+      STREAM_SERVICE_HLS_URL: /hls
+      STREAM_SERVICE_WEBRTC_URL: /whep
+      STREAM_SERVICE_RTSP_HOST: stream-service
+      STREAM_SERVICE_RECORDINGS_DIR: /recordings
+      RECORD_SUB: "0"
+      TRANSCODER_ALLOW_HW: "true"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      FRONTEND_URL: https://try.drishyam.io
+      CORS_ORIGINS: https://try.drishyam.io,https://demo.indyatools.com,http://103.109.7.36,http://103.109.7.36:80,http://localhost:5173,http://localhost:3000,http://localhost:8081
+      SUPERVISOR_FLAP_LIMIT: "4"
+      SUPERVISOR_FLAP_WINDOW_MS: "120000"
+      SUPERVISOR_QUARANTINE_MS: "600000"
+    ports:
+      - "5000:5000"
+    runtime: runc
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      stream-service:
+        condition: service_started
+
+  # ── Frontend (built SPA served by nginx on :80) ────────────────────────────
+  smart-cam-app:
+    image: drishyam/app:prod-20261109-audio
+    container_name: drisyam-original-app
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      smart-cam-backend:
+        condition: service_started
+
+  # ── AI: face detection / recognition (GPU) ─────────────────────────────────
+  smart-cam-ai:
+    image: drishyam/smart-cam-ai:prod
+    container_name: drisyam-original-ai
+    restart: unless-stopped
+    env_file:
+      - ./smart-cam-ai/.env
+    command:
+      - "sh"
+      - "-c"
+      - "alembic upgrade head && uvicorn vms_face.api.main:app --host 0.0.0.0 --port ${PORT:-8001}"
+    environment:
+      BACKEND_URL: http://smart-cam-backend:5000
+      MEDIAMTX_RTSP_HOST: mediamtx
+      MEDIAMTX_RTSP_PORT: 8554
+      MEDIAMTX_RTSP_TEMPLATE: rtsp://{host}:{port}/cam_{monitor_id}
+      PORT: 8001
+      POSTGRES_DSN: postgresql+asyncpg://vms:vms@postgres:5432/vms_face
+      POSTGRES_DSN_SYNC: postgresql+psycopg2://vms:vms@postgres:5432/vms_face
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:?set in .env}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?set in .env}"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      RECORDINGS_ROOT: /recordings
+      MINIO_BUCKET_OUTPUT: vms-person-tracker
+      TZ: Asia/Kolkata
+      API_PORT: 8001
+      KNOWN_FACES_DIR: /srv/app/face_detection/vms_face/data/known_faces
+      INSIGHTFACE_MODEL: buffalo_l
+      INSIGHTFACE_DET_SIZE: 960
+      # 16:9 detector input (960x544). A square tensor spends 43.8% of every
+      # inference on black padding for 16:9 video; shaping it to the picture
+      # measured 454ms -> 301ms detect and 73 -> 114 total fps on 33 cameras.
+      INSIGHTFACE_DET_ASPECT: "1.7778"
+      # One model instance per replica so cameras detect in parallel instead of
+      # queuing on a single lock. 1 measured 1512ms detect; 3 measured 454ms.
+      INSIGHTFACE_RUNTIME_REPLICAS: "3"
+      # 4 fps/camera is ample for face detection and halves detector demand
+      # vs the old 8; people do not move far in 250ms and the client overlay
+      # predicts between updates. Cuts oversubscription on a shared GPU.
+      TARGET_FPS: "4"
+      DETECT_EVERY_N_FRAMES: "3"   # detect every 3rd frame; Kalman predicts between (real-time box tracking)
+      INSIGHTFACE_CTX_ID: 0
+      INSIGHTFACE_PROVIDERS: CUDAExecutionProvider,CPUExecutionProvider
+      INSIGHTFACE_DET_THRESHOLD: "0.7"
+      INSIGHTFACE_REC_THRESHOLD: "0.45"
+      MATCH_MIN_FACE_PX: "15"
+      MATCH_MIN_QUALITY: "0.25"
+      MATCH_MIN_BLUR_VAR: "8.0"
+      JOURNEY_BODY_LOGGING: "true"
+      FACE_LEARNING_MIN_SIMILARITY: "0.50"
+      FACE_LEARNING_MIN_QUALITY: "0.45"
+      FACE_LEARNING_MIN_FACE_PX: "60"
+      FACE_LEARNING_MIN_BLUR_VAR: "20.0"
+      PIPELINE_PERSON_DETECTION_ENABLED: ${PIPELINE_PERSON_DETECTION_ENABLED:-false}
+      PIPELINE_PERSON_MODEL_PATH: /srv/data/models/yolov8n.onnx
+      PIPELINE_PERSON_THRESHOLD: "0.35"
+      PIPELINE_PERSON_DET_SIZE: "640"
+      PIPELINE_PERSON_DETECT_EVERY_N_FRAMES: "2"
+      TRACK_MIN_HITS_TO_MATCH: "2"
+      # Do NOT auto-pull every camera on boot — with 30+ cameras behind one
+      # shared NVR that floods the NVR (connection resets / timeouts). Detection
+      # starts per-camera on demand instead.
+      RESTART_ONLINE_STREAMS_ON_STARTUP: "false"
+      LEGACY_SINGLE_ACTIVE_CAMERA: "false"
+      PIPELINE_FRAME_TIMEOUT_SEC: "15.0"
+      RTSP_HWACCEL: ${RTSP_HWACCEL:-}
+      VMS_ENV: ${VMS_ENV:-dev}
+      VMS_JWT_DEV_BYPASS: ${VMS_JWT_DEV_BYPASS:-true}
+      VMS_JWT_SECRET: ${VMS_JWT_SECRET:-dev-only-secret-not-for-production-use-xxxx}
+      LEGACY_API_KEY: ${LEGACY_API_KEY:-}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    # HARDENED: no host port published. The AI service is reached only over the
+    # internal compose network — by the backend (smart-cam-ai:8001) and by the
+    # app's nginx /ai/ proxy. Not directly reachable from the internet.
+    runtime: nvidia
+    volumes:
+      - /data/ai-models/models:/srv/data/models:ro
+      - /data/ai-models/insightface:/root/.insightface
+      - /data/recordings:/recordings:ro
+    depends_on:
+      smart-cam-backend:
+        condition: service_started
+      stream-service:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      kafka:
+        condition: service_started
+
+  # ── AI match worker (GPU) ──────────────────────────────────────────────────
+  smart-cam-ai-worker:
+    image: drishyam/smart-cam-ai:prod
+    container_name: drisyam-original-ai-worker
+    restart: unless-stopped
+    env_file:
+      - ./smart-cam-ai/.env
+    command: ["python", "-m", "vms_face.workers.match_worker"]
+    environment:
+      MEDIAMTX_RTSP_HOST: mediamtx
+      MEDIAMTX_RTSP_PORT: 8554
+      MEDIAMTX_RTSP_TEMPLATE: rtsp://{host}:{port}/cam_{monitor_id}
+      POSTGRES_DSN: postgresql+asyncpg://vms:vms@postgres:5432/vms_face
+      POSTGRES_DSN_SYNC: postgresql+psycopg2://vms:vms@postgres:5432/vms_face
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:?set in .env}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?set in .env}"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INSIGHTFACE_MODEL: buffalo_l
+      INSIGHTFACE_DET_SIZE: 960
+      # 16:9 detector input (960x544). A square tensor spends 43.8% of every
+      # inference on black padding for 16:9 video; shaping it to the picture
+      # measured 454ms -> 301ms detect and 73 -> 114 total fps on 33 cameras.
+      INSIGHTFACE_DET_ASPECT: "1.7778"
+      # One model instance per replica so cameras detect in parallel instead of
+      # queuing on a single lock. 1 measured 1512ms detect; 3 measured 454ms.
+      INSIGHTFACE_RUNTIME_REPLICAS: "3"
+      # 4 fps/camera is ample for face detection and halves detector demand
+      # vs the old 8; people do not move far in 250ms and the client overlay
+      # predicts between updates. Cuts oversubscription on a shared GPU.
+      TARGET_FPS: "4"
+      DETECT_EVERY_N_FRAMES: "3"   # detect every 3rd frame; Kalman predicts between (real-time box tracking)
+      INSIGHTFACE_CTX_ID: 0
+      INSIGHTFACE_PROVIDERS: CUDAExecutionProvider,CPUExecutionProvider
+      INSIGHTFACE_DET_THRESHOLD: "0.7"
+      INSIGHTFACE_REC_THRESHOLD: "0.45"
+      FACE_LEARNING_MIN_SIMILARITY: "0.50"
+      FACE_LEARNING_MIN_QUALITY: "0.45"
+      FACE_LEARNING_MIN_FACE_PX: "60"
+      FACE_LEARNING_MIN_BLUR_VAR: "20.0"
+      MATCH_MIN_FACE_PX: "15"
+      MATCH_MIN_QUALITY: "0.25"
+      MATCH_MIN_BLUR_VAR: "8.0"
+      TRACK_MIN_HITS_TO_MATCH: "2"
+      TZ: Asia/Kolkata
+      VMS_ENV: ${VMS_ENV:-dev}
+      VMS_JWT_DEV_BYPASS: ${VMS_JWT_DEV_BYPASS:-true}
+      VMS_JWT_SECRET: ${VMS_JWT_SECRET:-dev-only-secret-not-for-production-use-xxxx}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    runtime: nvidia
+    volumes:
+      - /data/ai-models/models:/srv/data/models:ro
+      - /data/ai-models/insightface:/root/.insightface
+    depends_on:
+      smart-cam-ai:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  # ── Journey stitch worker (CPU / FFmpeg — no GPU) ──────────────────────────
+  journey-stitch-worker:
+    image: drishyam/smart-cam-ai:prod
+    container_name: drisyam-original-journey-stitch-worker
+    restart: unless-stopped
+    env_file:
+      - ./smart-cam-ai/.env
+    command: ["python", "-m", "vms_face.workers.stitch_worker"]
+    environment:
+      POSTGRES_DSN_SYNC: postgresql+psycopg2://vms:vms@postgres:5432/vms_face
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:?set in .env}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?set in .env}"
+      MINIO_BUCKET_OUTPUT: vms-person-tracker
+      RECORDINGS_ROOT: /recordings
+      CLIP_PAD_BEFORE_SEC: "2"
+      CLIP_PAD_AFTER_SEC: "4"
+      STITCH_MAX_TOTAL_SEC: "600"
+      TZ: Asia/Kolkata
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      VMS_ENV: ${VMS_ENV:-dev}
+      VMS_JWT_DEV_BYPASS: ${VMS_JWT_DEV_BYPASS:-true}
+      VMS_JWT_SECRET: ${VMS_JWT_SECRET:-dev-only-secret-not-for-production-use-xxxx}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - /data/recordings:/recordings:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      kafka:
+        condition: service_started
+
+  activity-monitor:
+    image: drishyam/activity-monitor:prod
+    container_name: drisyam-original-activity-monitor
+    restart: unless-stopped
+    volumes:
+      - ./smart-cam-ai/app/activity-monitor/config:/srv/activity-monitor/config
+      - activity-data:/srv/activity-monitor/data
+    environment:
+      TZ: Asia/Kolkata
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  head-count:
+    image: drishyam/head-count:prod
+    container_name: drisyam-original-head-count
+    restart: unless-stopped
+    # legacy nvidia runtime — the gpus:/CDI path holds a stale 595.71.05 spec
+    # from before the June driver upgrade to 595.84; runtime: nvidia is what
+    # every other GPU service here uses and it tracks the live driver.
+    runtime: nvidia
+    env_file:
+      - ./smart-cam-backend/.env
+    environment:
+      TZ: Asia/Kolkata
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      BACKEND_URL: http://smart-cam-backend:5000
+      OPENCV_FFMPEG_CAPTURE_OPTIONS: "rtsp_transport;tcp"
+      HEADCOUNT_FORWARD__ENABLED: "true"
+    volumes:
+      - ./smart-cam-ai/app/head-count/config:/srv/head-count/config
+      - head-count-models:/srv/head-count/models
+    ports:
+      - "8020:8000"
+    depends_on:
+      redis:
+        condition: service_started
+      stream-service:
+        condition: service_started
+      smart-cam-backend:
+        condition: service_started
+
+volumes:
+  head-count-models:
+  mysql-data:
+  postgres-data:
+  qdrant-data:
+  minio-data:
+  kafka-data:
+  activity-data:

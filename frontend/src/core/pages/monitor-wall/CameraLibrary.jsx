@@ -227,7 +227,7 @@ export default function CameraLibrary({
           <div className="px-3 py-10 text-center">
             <Camera className="mx-auto mb-2 h-8 w-8 text-fg-muted/30" />
             <p className="text-body font-medium text-fg-muted">No cameras yet</p>
-            <Link to="/camera-setup" className="mt-1 inline-block text-small font-semibold text-brand hover:underline">Add cameras in Camera Setup</Link>
+            <Link to="/camera-setup" className="mt-1 inline-block text-small font-semibold text-brand hover:underline">Add cameras</Link>
           </div>
         ) : tree.length === 0 ? (
           <div className="px-3 py-10 text-center">

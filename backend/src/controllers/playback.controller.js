@@ -14,6 +14,11 @@
  *   /nvr/recordings  asks the NVR which parts of a day it has footage for (the
  *                    timeline's Recording track).
  *   /nvr/export      streams a clip of that footage to the browser as an MP4.
+ *
+ * Cameras that come in through a site relay (path edge_<site>_<token>_chN) sit
+ * on a private network we can't reach, so their relay replays the NVR for us
+ * and pushes the footage up (edgeRelay.service). Its pushed path then stands
+ * in for the NVR's playback URL; everything downstream is the same.
  */
 const { spawn } = require('node:child_process');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -23,8 +28,10 @@ const vendors = require('../services/vendors');
 const streamRouter = require('../services/streamRouter.service');
 const streamingService = require('../services/drishyamStreaming.service');
 const nvrRecordingSearch = require('../services/nvrRecordingSearch.service');
+const edgeRelay = require('../services/edgeRelay.service');
 const logger = require('../config/logger');
 const config = require('../config/env');
+const liveRelay = require('../services/liveRelay.service');
 
 const MAX_RANGE_MS = 6 * 3600 * 1000;      // cap one request at 6h of footage
 const MAX_SESSION_MS = 30 * 60 * 1000;     // hard-kill ffmpeg after 30 min
@@ -48,17 +55,24 @@ function stopSession(pathN) {
   if (!s) return;
   sessions.delete(pathN);
   clearTimeout(s.timer);
-  try { s.proc.kill('SIGKILL'); } catch { /* already gone */ }
+  edgeRelay.closeReplay(s.edgeJob);
+  if (s.relay) liveRelay.stopRelay(s.relayPath || pathN);
+  try { s.proc?.kill('SIGKILL'); } catch { /* already gone */ }
   logger.info('nvr playback session stopped', { pathN });
 }
 
-function spawnTranscode(pathN, nvrRtsp) {
+// `copy`: the source is already H.264 (a relay's replay reports its codec), so
+// it is passed straight through — starts sooner and costs no CPU.
+function spawnTranscode(pathN, nvrRtsp, edgeJob = null, { copy = false } = {}) {
+  const video = copy
+    ? ['-c:v', 'copy']
+    : ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p'];
   const args = [
     '-hide_banner', '-loglevel', 'error',
     '-rtsp_transport', 'tcp',
     '-i', nvrRtsp,
     '-an',                                   // drop NVR G711 audio (HLS trouble)
-    '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p',
+    ...video,
     '-f', 'rtsp', '-rtsp_transport', 'tcp', `${MEDIAMTX_RTSP}/${pathN}`,
   ];
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -68,10 +82,11 @@ function spawnTranscode(pathN, nvrRtsp) {
     if (code && code !== 255) logger.warn('nvr playback ffmpeg exited', { pathN, code, tail: redact(tail).trim().slice(-200) });
     const s = sessions.get(pathN);
     if (s && s.proc === proc) { clearTimeout(s.timer); sessions.delete(pathN); }
+    edgeRelay.closeReplay(edgeJob);
   });
   proc.on('error', (e) => logger.error('nvr playback ffmpeg spawn error', { pathN, error: e.message }));
   const timer = setTimeout(() => stopSession(pathN), MAX_SESSION_MS);
-  sessions.set(pathN, { proc, timer, startedAt: Date.now() });
+  sessions.set(pathN, { proc, timer, startedAt: Date.now(), edgeJob });
   return proc;
 }
 
@@ -94,13 +109,19 @@ async function loadCamera(userId, monitorId) {
     include: [{ model: CameraGroup, as: 'group' }],
   });
   if (!camera) throw new AppError('Camera not found.', 404);
-  return { camera, group: camera.group, deviceType: camera.deviceType || camera.group?.deviceType || 'hikvision' };
+  return {
+    camera,
+    group: camera.group,
+    deviceType: camera.deviceType || camera.group?.deviceType || 'hikvision',
+    edge: edgeRelay.parseEdgeCamera(camera),
+  };
 }
 
 // The device holding the recordings: the group's NVR, else the camera itself.
 const nvrHost = ({ camera, group }) => group?.host ?? camera.host ?? null;
 
 function assertPlayback(cam) {
+  if (cam.edge) return;       // the relay knows its NVR's brand and does the replay
   if (!vendors.supportsPlayback(cam.deviceType)) {
     throw new AppError(`NVR playback isn't supported for "${cam.deviceType}" yet. Supported: Hikvision, Dahua / CP Plus.`, 422);
   }
@@ -119,6 +140,17 @@ function nvrPlaybackRtsp(cam, startMs, endMs) {
   });
 }
 
+/**
+ * Where to read the NVR's footage for [startMs, endMs] from: the NVR's own
+ * playback URL, or for a relayed camera the path its relay pushes the replay
+ * to (edgeJob is then that request, to close when done).
+ */
+async function playbackSource(cam, startMs, endMs) {
+  if (!cam.edge) return { url: nvrPlaybackRtsp(cam, startMs, endMs), edgeJob: null, h264: false };
+  const { id, sourceUrl, codec } = await edgeRelay.openReplay(cam.edge, startMs, endMs);
+  return { url: sourceUrl, edgeJob: id, h264: codec === 'H264' };
+}
+
 // POST /api/playback/nvr/start   { monitorId, start, end }
 const startNvrPlayback = asyncHandler(async (req, res) => {
   const { monitorId, start, end } = req.body || {};
@@ -127,11 +159,46 @@ const startNvrPlayback = asyncHandler(async (req, res) => {
 
   const cam = await loadCamera(req.user.id, monitorId);
   assertPlayback(cam);
-  const nvrRtsp = nvrPlaybackRtsp(cam, startMs, endMs);
 
   const pathN = `pb_${monitorId}_${startMs}`;
   stopSession(pathN);           // replace any previous session for this exact window
-  spawnTranscode(pathN, nvrRtsp);
+
+  // Fast path (`relay: true` from browsers with MediaSource; `hevc` says
+  // whether they decode H.265 — older pages only sent relay when they did):
+  // the footage goes to the browser over the live relay WebSocket,
+  // stream-copied, with no H.264 transcode and no HLS segments to wait for.
+  //   • NVR we reach: its own playback RTSP, only for H.265-capable browsers
+  //     (the codec isn't known before it plays; NVRs here are mostly H.265).
+  //   • Site-relay camera: the replay its relay pushes up, once it is up; the
+  //     codec is known then, so H.264 sites get it in every browser.
+  const wantRelay = !!req.body.relay;
+  const hevcOk = req.body.hevc === undefined ? wantRelay : !!req.body.hevc;
+  if (wantRelay && hevcOk && !cam.edge) {
+    const ticket = liveRelay.issueTicket({
+      userId: req.user.id, monitorId, path: pathN, variant: 'main',
+      nvrUrl: nvrPlaybackRtsp(cam, startMs, endMs), once: true,
+    });
+    sessions.set(pathN, { proc: null, relay: true, startedAt: Date.now(), timer: setTimeout(() => stopSession(pathN), MAX_SESSION_MS) });
+    logger.info('nvr playback started', { userId: req.user.id, monitorId, deviceType: cam.deviceType, pathN, mode: 'relay' });
+    return res.json({
+      success: true, mode: 'relay', pathName: pathN, ticket,
+      range: { start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString() },
+      deviceType: cam.deviceType,
+    });
+  }
+  const src = await playbackSource(cam, startMs, endMs);
+  if (wantRelay && cam.edge && (src.h264 || hevcOk)) {
+    const relayPath = String(src.url).split('/').pop();      // pbsrc_<site>_<token>_<id>
+    const ticket = liveRelay.issueTicket({ userId: req.user.id, monitorId, path: relayPath, variant: 'main', once: true });
+    sessions.set(pathN, { proc: null, relay: true, relayPath, edgeJob: src.edgeJob, startedAt: Date.now(), timer: setTimeout(() => stopSession(pathN), MAX_SESSION_MS) });
+    logger.info('nvr playback started', { userId: req.user.id, monitorId, deviceType: cam.deviceType, pathN, mode: 'relay', via: 'site relay' });
+    return res.json({
+      success: true, mode: 'relay', pathName: pathN, ticket,
+      range: { start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString() },
+      deviceType: cam.deviceType,
+    });
+  }
+  spawnTranscode(pathN, src.url, src.edgeJob, { copy: src.h264 });
 
   logger.info('nvr playback started', { userId: req.user.id, monitorId, deviceType: cam.deviceType, pathN });
   res.json({
@@ -167,6 +234,12 @@ const searchNvrRecordings = asyncHandler(async (req, res) => {
   if (!monitorId || !start || !end) throw new AppError('monitorId, start and end are required.', 400);
   const { startMs, endMs } = parseRange(start, end, MAX_SEARCH_MS, '48 hours');
   const cam = await loadCamera(req.user.id, monitorId);
+  if (cam.edge) {
+    return res.json({
+      success: true, supported: false, segments: [],
+      reason: 'Recording search is not available for cameras connected through a site relay yet.',
+    });
+  }
   const host = nvrHost(cam);
   if (!host) {
     return res.json({ success: true, supported: false, reason: "This camera isn't connected through an NVR.", segments: [] });
@@ -249,16 +322,33 @@ const exportNvrClip = asyncHandler(async (req, res) => {
   const format = req.query.format === 'original' ? 'original' : 'mp4';
   const durationSec = Math.ceil((endMs - startMs) / 1000);
   const filename = exportFilename(req.query.name, cam.camera, startMs);
-  const proc = spawn('ffmpeg', exportArgs(nvrPlaybackRtsp(cam, startMs, endMs), durationSec, format), {
+  // Claimed before the (possibly slow) relay handshake, so a double click
+  // can't start two pulls on the NVR.
+  const entry = { proc: null };
+  exportsByUser.set(req.user.id, entry);
+  let src;
+  try {
+    src = await playbackSource(cam, startMs, endMs);
+  } catch (err) {
+    exportsByUser.delete(req.user.id);
+    throw err;
+  }
+  if (req.destroyed) {          // download cancelled while the relay was connecting
+    exportsByUser.delete(req.user.id);
+    edgeRelay.closeReplay(src.edgeJob);
+    return;
+  }
+  // An H.264 replay is already what 'mp4' would re-encode to: copy it.
+  const proc = spawn('ffmpeg', exportArgs(src.url, durationSec, src.h264 ? 'original' : format), {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const entry = { proc };
-  exportsByUser.set(req.user.id, entry);
+  entry.proc = proc;
   // The NVR should end the stream at the range's end on its own; this is the
   // backstop for one that keeps sending.
   const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* gone */ } }, (durationSec + 90) * 1000);
   const release = () => {
     clearTimeout(timer);
+    edgeRelay.closeReplay(src.edgeJob);
     if (exportsByUser.get(req.user.id) === entry) exportsByUser.delete(req.user.id);
   };
   logger.info('nvr export started', { userId: req.user.id, monitorId, format, durationSec });

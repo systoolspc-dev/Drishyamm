@@ -19,6 +19,9 @@ const LOW_TRANSCODE_MAX_ACTIVE = parseInt(process.env.GRID_LOW_TRANSCODE_MAX || 
 const LOW_TRANSCODE_COOLDOWN_MS = parseInt(process.env.GRID_LOW_TRANSCODE_COOLDOWN_MS || '15000', 10);
 const _lowWarmupInFlight = new Set();
 const _lowWarmupLastAt = new Map();
+// Single-camera view: how long /stream/start waits for the MAIN channel
+// (NVR pull + ffmpeg's first 1080p keyframe) before serving the sub instead.
+const MAIN_OPEN_BUDGET_MS = parseInt(process.env.MAIN_OPEN_BUDGET_MS || '12000', 10);
 
 /**
  * Warm up the HLS muxer for a path. Two-phase strategy:
@@ -189,6 +192,7 @@ class StreamService {
     const { monitorId } = camera;
 
     const camConfig = {
+      userId:   camera.userId,   // drives per-account recording (RECORD_USER_IDS)
       host:     camera.host,
       port:     camera.port,
       path:     camera.path,
@@ -200,6 +204,8 @@ class StreamService {
     const existing = await streamingService.getPath(monitorId);
     if (!existing) {
       await streamingService.addCamera(monitorId, camConfig);
+    } else if (typeof streamingService.ensureMainCloseAfter === 'function') {
+      streamingService.ensureMainCloseAfter(monitorId).catch(() => {});
     }
 
     // Add sub-stream path (on-demand, no recording) for grid / low-bandwidth view.
@@ -374,6 +380,7 @@ class StreamService {
     let hlsUrl = preferSub && hlsSubUrl ? hlsSubUrl : sourceHlsUrl;
     let codec  = null;
     let transcoded = false;
+    let mainOpen = null;   // single view: why main was / wasn't served (returned for diagnostics)
 
     codec = await detectSourceCodec(monitorId);
 
@@ -435,7 +442,38 @@ class StreamService {
       // main-channel session, so serve that instead of publishing a main
       // `_h264` URL that will never appear (WHEP 404 + HLS 404 = a player stuck
       // on "Connecting…" forever, which is exactly what Live View showed).
-      const mainOk = await isPathReady(streamingService.pathName(monitorId));
+      // Single-camera view (blocking) opens the main channel on demand. The main
+      // source is on-demand too, so "ready" was only ever true when something
+      // else happened to hold it open — in practice never, and every Live View /
+      // fullscreen played the 360p sub upscaled (blurry). The main transcoder
+      // is the source's reader (no source-ready gate since #3), so spawning it
+      // is what makes Stream Service pull main from the NVR. Bounded: if main
+      // isn't publishing within MAIN_OPEN_BUDGET_MS (NVR at its session limit,
+      // thin uplink), fall back to the sub exactly as before.
+      //
+      // Judge by the TRANSCODED main path, not the source: a source can go
+      // `ready` and then stall (seen 2026-10-19: one channel's main sent 64 KB
+      // and stopped), and handing out a `_h264` URL that never publishes is the
+      // WHEP-404 / black-player failure again.
+      const mainH264 = transcoderService.transcodedPathName(monitorId);
+      let mainOk = await isPathReady(mainH264);
+      const blocking = quality !== 'low';
+      if (!mainOk && blocking) {
+        const t0 = Date.now();
+        // Free this NVR's uplink from sub-streams nobody is watching first:
+        // main can't start while they take the whole link.
+        await require('./streamWarm.service').yieldForMain(camera).catch(() => {});
+        const { spawned: mainSpawned, reason: mainReason } = await transcoderService.requestTranscode(monitorId, {
+          variant: 'main', wait: true, priority: 1,
+        });
+        if (mainSpawned || mainReason === 'already-running') {
+          mainOk = await warmupHlsPath(mainH264, {
+            maxAttempts: 8, delayMs: 300, readyBudgetMs: MAIN_OPEN_BUDGET_MS,
+          });
+        }
+        mainOpen = { ok: mainOk, reason: mainReason || null, ms: Date.now() - t0 };
+        logger.info('[Stream] main channel opened on demand', { monitorId, ...mainOpen });
+      }
       const variant = mainOk ? 'main' : 'sub';
       const targetPath = mainOk
         ? transcoderService.transcodedPathName(monitorId)
@@ -445,8 +483,7 @@ class StreamService {
       // before its transcoder has spawned is precisely what made WHEP answer
       // 404. Grid tiles no longer reach this code at all — they poll
       // head-count snapshots — so nobody pays for this wait but the one player
-      // the operator is actually looking at.
-      const blocking = quality !== 'low';
+      // the operator is actually looking at. (`blocking` is set above.)
       const { spawned, reason } = await transcoderService.requestTranscode(monitorId, {
         variant, wait: blocking, priority: 1,
       });
@@ -471,7 +508,7 @@ class StreamService {
       monitorId, codec, subCodec, transcoded,
       hasSubStream: !!subRtspPath,
     });
-    return { webrtcUrl, hlsUrl, hlsSubUrl, provider: 'mediamtx', codec, transcoded };
+    return { webrtcUrl, hlsUrl, hlsSubUrl, provider: 'mediamtx', codec, transcoded, mainOpen };
   }
 
   /**
@@ -479,6 +516,58 @@ class StreamService {
    * Called on camera/group delete — not on normal "stop watching" events
    * because Stream Service should keep recording 24/7 regardless of who is watching.
    */
+  /**
+   * Live relay path for a camera (see liveRelay.service.js). Only the cheap
+   * part of startStream: make sure the Stream Service paths exist — no codec
+   * probe, no HLS warm-up, no waiting. Returns the path the relay reads.
+   *   variant 'sub'  → cam_<id>_sub (main path when the camera has no sub)
+   *   variant 'main' → cam_<id>
+   *   transcode      → the H.264 sidecar of that variant (ffmpeg started here,
+   *                    non-blocking; the relay retries until it publishes)
+   */
+  async ensureLivePath(camera, { variant = 'sub', transcode = false } = {}) {
+    const { monitorId } = camera;
+    const camConfig = {
+      userId: camera.userId,     // drives per-account recording (RECORD_USER_IDS)
+      host: camera.host, port: camera.port, path: camera.path,
+      username: camera.username, password: camera.password,
+    };
+    this._livePathsAt ||= new Map();
+    const fresh = (this._livePathsAt.get(monitorId) || 0) > Date.now() - 60_000;
+    const subRtspPath = streamingService.deriveSubPath(camera.path);
+    if (!fresh) {
+      const existing = await streamingService.getPath(monitorId);
+      if (!existing) await streamingService.addCamera(monitorId, camConfig);
+      else if (typeof streamingService.ensureMainCloseAfter === 'function') {
+        streamingService.ensureMainCloseAfter(monitorId).catch(() => {});
+      }
+      if (subRtspPath) await streamingService.addCameraSubStream(monitorId, { ...camConfig, path: subRtspPath });
+      this._livePathsAt.set(monitorId, Date.now());
+    }
+    const useSub = variant === 'sub' && !!subRtspPath;
+    if (transcode) {
+      transcoderService.requestTranscode(monitorId, { variant: useSub ? 'sub' : 'main', priority: useSub ? 5 : 1 })
+        .catch((err) => logger.warn('[Stream] live transcode request failed', { monitorId, error: err.message }));
+      return useSub ? transcoderService.transcodedSubPathName(monitorId) : transcoderService.transcodedPathName(monitorId);
+    }
+    return useSub ? `cam_${monitorId}_sub` : `cam_${monitorId}`;
+  }
+
+  /**
+   * The camera's own RTSP URL for a live-relay variant (credentials included —
+   * never log it). The relay pulls it directly when Stream Service isn't
+   * already pulling that stream: the NVR opens every session on a keyframe,
+   * which a reader attached behind Stream Service misses (then waits a full
+   * camera GOP, 3.3 s here).
+   */
+  liveNvrUrl(camera, variant = 'sub') {
+    const sub = variant === 'sub' ? streamingService.deriveSubPath(camera.path) : null;
+    return streamingService.buildRtspUrl({
+      host: camera.host, port: camera.port, path: sub || camera.path,
+      username: camera.username, password: camera.password,
+    });
+  }
+
   async stopStream(monitorId) {
     // Kill any transcoder first so it doesn't try to push to a dying path.
     transcoderService.stopTranscoder(monitorId);

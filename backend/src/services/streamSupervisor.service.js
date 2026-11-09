@@ -55,6 +55,7 @@ const config       = require('../config/env');
 const logger       = require('../config/logger');
 const { bus, EVENTS } = require('../events/bus');
 const streamBus    = require('./streamBus.service');
+const cameraOfflineAlert = require('./cameraOfflineAlert.service');
 const streamQuality = require('./streamQuality.service');
 const metrics      = require('./metrics.service');
 const reachability = require('./cameraReachability.service');
@@ -376,7 +377,7 @@ async function tick() {
 
   // Index cameras by id; we need bulkUpdate with monitor_id → status mapping later
   const cameras = await Camera.findAll({
-    attributes: ['id', 'userId', 'monitorId', 'mediamtxServerId', 'status', 'flapCount24h', 'host'],
+    attributes: ['id', 'userId', 'monitorId', 'mediamtxServerId', 'status', 'flapCount24h', 'host', 'name'],
   });
   if (!cameras.length) return;
 
@@ -512,6 +513,13 @@ async function tick() {
 
       // In-process: triggers WS fan-out on this instance
       bus.emit(eventName, payload);
+
+      // Camera-down / recovery email alerts (debounced, fire-and-forget).
+      if (eventName === EVENTS.STREAM_OFFLINE) {
+        cameraOfflineAlert.onOffline({ monitorId: t.camera.monitorId, cameraName: t.camera.name, userId: t.camera.userId, reason: t.reason, at: payload.at });
+      } else if (eventName === EVENTS.STREAM_READY) {
+        cameraOfflineAlert.onRecover({ monitorId: t.camera.monitorId, cameraName: t.camera.name, userId: t.camera.userId, at: payload.at });
+      }
 
       // Cross-process: AI worker, other backend instances, gateway WS, dashboards
       streamBus.publish(eventName, payload).catch((e) =>

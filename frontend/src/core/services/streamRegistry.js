@@ -31,16 +31,27 @@ import api from '@/core/services/api';
 const GRACE_MS = 30_000;
 const RETRY_AFTER_FAIL_MS = 4_000;
 // A transcoded (_h264) path 404s until ffmpeg publishes into it, which takes
-// 5-30 s after /stream/start. That is warm-up, not failure: stay 'connecting'
-// and poll the same URL briefly instead of flipping the tile offline.
-const WARMUP_RETRY_MS = 1_500;
-const WARMUP_MAX_TRIES = 30;
+// a few seconds after /stream/start. That is warm-up, not failure: stay
+// 'connecting' and re-POST the SAME offer — no new peer connection, no new ICE
+// gathering (up to ICE_GATHER_TIMEOUT_MS each time). Poll fast at first, since
+// the path usually appears within seconds, then back off. A 404 from the Stream
+// Service is a cheap local answer: it never reaches the camera or NVR.
+const WARMUP_FIRST_MS = 250;
+const WARMUP_MAX_DELAY_MS = 1_500;
+const WARMUP_BUDGET_MS = 45_000;
 // Used to decide whether a late subscriber should upgrade a shared connection.
 // Anything unrecognised ranks as 'auto' — the backend's own default for an
 // unknown ?quality — so a typo can never silently downgrade a live view.
 const QUALITY_RANK = { low: 0, auto: 1, high: 2 };
 const rankOf = (q) => (q in QUALITY_RANK ? QUALITY_RANK[q] : QUALITY_RANK.auto);
-const ICE_GATHER_TIMEOUT_MS = 1_500;
+// How long to wait for ICE candidates before sending the offer. The Stream
+// Service has its own public/host candidates and learns ours from the
+// connectivity checks (peer-reflexive), so a direct path needs nothing beyond
+// the host candidates Chrome gathers in a few ms. Waiting for full gathering
+// (Google STUN round trips) cost up to 1.5 s on EVERY start — warm, cold and
+// reload alike. Only a TURN relay is worth waiting for, and only briefly.
+const ICE_GATHER_TIMEOUT_MS = 200;
+const ICE_GATHER_TIMEOUT_TURN_MS = 800;
 
 // Background-tab suspension.
 //
@@ -146,6 +157,10 @@ function makeEntry(monitorId, quality = 'auto') {
     failures: 0,
     refCount: 0,
     subscribers: new Set(),
+    // subscriber callback → the quality it asked for; the entry steps down
+    // when the richest remaining ask is lower (see retarget()).
+    wants: new Map(),
+    downgradeTimer: null,
     closeTimer: null,
     // Bumped on every (re)negotiation. Pending async work checks this
     // to avoid mutating an entry that's been superseded.
@@ -182,10 +197,41 @@ function closeConnection(entry) {
   entry.mediaStream = null;
 }
 
+// Wait this long before stepping a camera down from main, so leaving and
+// re-entering fullscreen doesn't bounce between streams.
+const DOWNGRADE_DELAY_MS = 8_000;
+
+/**
+ * Upgrades happen in subscribe(); this handles the other direction. When the
+ * richest quality any current subscriber wants is below what the entry runs
+ * at, step down after DOWNGRADE_DELAY_MS. With no subscribers the grace close
+ * takes care of it.
+ */
+function retarget(entry) {
+  if (entry.wants.size === 0) return;
+  let want = 'low';
+  for (const q of entry.wants.values()) if (rankOf(q) > rankOf(want)) want = q;
+  if (rankOf(want) >= rankOf(entry.quality)) {
+    if (entry.downgradeTimer) { clearTimeout(entry.downgradeTimer); entry.downgradeTimer = null; }
+    return;
+  }
+  if (entry.downgradeTimer) return;
+  entry.downgradeTimer = setTimeout(() => {
+    entry.downgradeTimer = null;
+    if (registry.get(entry.monitorId) !== entry || entry.wants.size === 0) return;
+    let now = 'low';
+    for (const q of entry.wants.values()) if (rankOf(q) > rankOf(now)) now = q;
+    if (rankOf(now) >= rankOf(entry.quality)) return;
+    entry.quality = now;
+    if (entry.onMain) downgradeFromMain(entry);
+  }, DOWNGRADE_DELAY_MS);
+}
+
 function destroyEntry(monitorId) {
   const entry = registry.get(monitorId);
   if (!entry) return;
   if (entry.closeTimer) { clearTimeout(entry.closeTimer); entry.closeTimer = null; }
+  if (entry.downgradeTimer) { clearTimeout(entry.downgradeTimer); entry.downgradeTimer = null; }
   closeConnection(entry);
   registry.delete(monitorId);
 }
@@ -255,12 +301,23 @@ async function negotiate(entry) {
 
   const epoch = ++entry.epoch;
 
+  // Fullscreen ('high') starts on the grid stream — kept warm while the user is
+  // logged in, so it plays in well under a second — and upgradeToMain() swaps
+  // in the 1080p main stream once that is publishing. Waiting for main first
+  // meant 5–12 s of spinner, or a blur after all if the NVR stalled main.
+  entry.onMain = false;
+  const startQuality = entry.quality === 'high' ? 'low' : entry.quality;
+  // Ask the backend which path to play NOW, in parallel with building the
+  // offer: /stream/start and ICE gathering used to run one after the other.
+  const urlPromise = resolveWhepUrl(entry.monitorId, startQuality);
+  urlPromise.catch(() => {});
+
   try {
     // Phase 1.4: pull TURN creds from backend if coturn is deployed. The
     // service falls back to STUN-only iceServers when the backend says
     // TURN isn't configured, so this call is safe in every environment
-    // (dev/LAN/prod) without conditional logic here.
-    const { iceServers } = await getIceServers();
+    // (dev/LAN/prod) without conditional logic here. Cached after the first call.
+    const { iceServers, available: turnAvailable } = await getIceServers();
     if (epoch !== entry.epoch) return;
 
     const pc = new RTCPeerConnection({
@@ -287,64 +344,44 @@ async function negotiate(entry) {
       }
     });
 
-    pc.addEventListener('iceconnectionstatechange', () => {
-      if (epoch !== entry.epoch) return;
-      const s = pc.iceConnectionState;
-      if (s === 'connected' || s === 'completed') {
-        entry.failures = 0;
-        if (entry.state !== 'streaming') {
-          entry.state = 'streaming';
-          notify(entry);
-        }
-      } else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
-        if (entry.state === 'offline') return; // dedupe
-        entry.failures += 1;
-        entry.state = 'offline';
-        notify(entry);
-        // Re-resolve too: if the transcoder behind this path has exited, only a
-        // fresh /stream/start will start it again (requestTranscode is
-        // idempotent, so asking when it is alive costs nothing).
-        invalidateWhepUrl(entry.monitorId, entry.quality);
-        // Auto-retry only while someone is still watching. If everyone
-        // navigated away and ICE failed at the same time, just close.
-        if (entry.refCount > 0) {
-          setTimeout(() => {
-            if (entry.refCount > 0 && entry.epoch === epoch) negotiate(entry);
-          }, RETRY_AFTER_FAIL_MS);
-        }
-      }
-    });
+    watchIce(entry, pc, epoch);
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await waitIceGatheringComplete(pc, ICE_GATHER_TIMEOUT_MS);
+    await waitIceGatheringComplete(pc, turnAvailable ? ICE_GATHER_TIMEOUT_TURN_MS : ICE_GATHER_TIMEOUT_MS);
 
     if (epoch !== entry.epoch) return;
 
-    const url = await resolveWhepUrl(entry.monitorId, entry.quality);
+    const url = await urlPromise;
     if (epoch !== entry.epoch) return;
-    const resp = await fetch(url, {
+    const post = () => fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/sdp' },
       body: pc.localDescription.sdp,
     });
-    if (resp.status === 404 && (entry.warmTries || 0) < WARMUP_MAX_TRIES) {
+    let resp = await post();
+    const warmUntil = Date.now() + WARMUP_BUDGET_MS;
+    let delay = WARMUP_FIRST_MS;
+    while (resp.status === 404 && Date.now() < warmUntil) {
       entry.warmTries = (entry.warmTries || 0) + 1;
-      try { pc.close(); } catch { /* already closed */ }
-      if (entry.refCount > 0) {
-        setTimeout(() => {
-          if (entry.refCount > 0 && entry.epoch === epoch) negotiate(entry);
-        }, WARMUP_RETRY_MS);
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(WARMUP_MAX_DELAY_MS, Math.round(delay * 1.5));
+      if (epoch !== entry.epoch || entry.refCount <= 0) {
+        try { pc.close(); } catch { /* already closed */ }
+        return;
       }
-      return;
+      resp = await post();
     }
+    // Still 404 after the budget: fall through to the failure path, which
+    // re-resolves via /stream/start so the backend can restart the transcoder.
     if (!resp.ok) throw new Error(`WHEP ${resp.status}`);
     entry.warmTries = 0;
     const answerSdp = await resp.text();
     if (epoch !== entry.epoch) return;
     await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-    // 'streaming' will get set when ICE connects (the listener above).
+    // 'streaming' will get set when ICE connects (watchIce).
     // If ICE never connects, callers' stall watchdog catches it.
+    if (entry.quality === 'high') upgradeToMain(entry);
   } catch (err) {
     if (epoch !== entry.epoch) return;
     entry.warmTries = 0;
@@ -355,7 +392,7 @@ async function negotiate(entry) {
     // The path we were told to use did not work (a 404 here means it does not
     // exist yet). Re-resolve on the retry so the backend gets another chance to
     // start the transcoder, instead of us hammering a URL that never appears.
-    invalidateWhepUrl(entry.monitorId, entry.quality);
+    invalidateWhepUrl(entry.monitorId, startQuality);
     if (entry.refCount > 0) {
       setTimeout(() => {
         if (entry.refCount > 0 && entry.epoch === epoch) negotiate(entry);
@@ -387,7 +424,9 @@ export function subscribe(monitorId, callback, { quality = 'auto' } = {}) {
     // opening a second PC — that would be a second NVR session for one camera.
     // Only ever upwards: a thumbnail must never drag the expanded view down.
     entry.quality = quality;
-    negotiate(entry);
+    // Keep showing what is already playing; fetch main alongside it.
+    if (quality === 'high' && entry.pc && !entry.negotiating) upgradeToMain(entry);
+    else negotiate(entry);
   }
 
   entry.refCount++;
@@ -396,13 +435,17 @@ export function subscribe(monitorId, callback, { quality = 'auto' } = {}) {
     entry.closeTimer = null;
   }
   entry.subscribers.add(callback);
+  entry.wants.set(callback, quality);
+  retarget(entry);
   // Initial snapshot — caller doesn't have to wait for the first
   // state change to render something.
   try { callback(snapshot(entry)); } catch (e) { console.warn(e); }
 
   return function unsubscribe() {
     entry.subscribers.delete(callback);
+    entry.wants.delete(callback);
     entry.refCount = Math.max(0, entry.refCount - 1);
+    retarget(entry);
     if (entry.refCount === 0) {
       // Grace timer — if nobody re-subscribes within GRACE_MS, close.
       // Cancels itself if refCount > 0 by the time it fires (race-safe).
@@ -475,6 +518,185 @@ export function inspect() {
     closingIn: entry.closeTimer ? GRACE_MS : null,
     epoch: entry.epoch,
   }));
+}
+
+
+/** Connection-state handling for the entry's current peer connection. */
+function watchIce(entry, pc, epoch) {
+  pc.addEventListener('iceconnectionstatechange', () => {
+    if (epoch !== entry.epoch) return;
+    const s = pc.iceConnectionState;
+    if (s === 'connected' || s === 'completed') {
+      entry.failures = 0;
+      if (entry.state !== 'streaming') {
+        entry.state = 'streaming';
+        notify(entry);
+      }
+    } else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
+      if (entry.state === 'offline') return; // dedupe
+      entry.failures += 1;
+      entry.state = 'offline';
+      notify(entry);
+      // Re-resolve too: if the transcoder behind this path has exited, only a
+      // fresh /stream/start will start it again (requestTranscode is
+      // idempotent, so asking when it is alive costs nothing).
+      invalidateWhepUrl(entry.monitorId, entry.onMain ? 'high' : (entry.quality === 'high' ? 'low' : entry.quality));
+      entry.onMain = false;
+      // Auto-retry only while someone is still watching. If everyone
+      // navigated away and ICE failed at the same time, just close.
+      if (entry.refCount > 0) {
+        setTimeout(() => {
+          if (entry.refCount > 0 && entry.epoch === epoch) negotiate(entry);
+        }, RETRY_AFTER_FAIL_MS);
+      }
+    }
+  });
+}
+
+const MAIN_RETRY_MS = 20_000;
+const MAIN_FIRST_FRAME_TIMEOUT_MS = 10_000;
+
+const MAIN_STALL_MS = 4_000;
+const MAIN_BACKOFF_MS = 60_000;
+
+/**
+ * Main streams from a remote NVR can start and then stall while ICE stays
+ * "connected" (seen 2026-10-19: 64 KB, then nothing). Watch decoded frames;
+ * if they stop for MAIN_STALL_MS, go back to the grid stream (renegotiate,
+ * which starts on the warm sub) and leave main alone for MAIN_BACKOFF_MS.
+ */
+function watchMainFrames(entry, epoch) {
+  let last = -1;
+  let lastChange = Date.now();
+  const iv = setInterval(async () => {
+    if (entry.epoch !== epoch || !entry.pc || !entry.onMain) { clearInterval(iv); return; }
+    let decoded = 0;
+    try {
+      (await entry.pc.getStats()).forEach((r) => {
+        if (r.type === 'inbound-rtp' && r.kind === 'video') decoded = r.framesDecoded || 0;
+      });
+    } catch { return; }
+    if (decoded !== last) { last = decoded; lastChange = Date.now(); return; }
+    if (Date.now() - lastChange < MAIN_STALL_MS) return;
+    clearInterval(iv);
+    entry.mainBackoffUntil = Date.now() + MAIN_BACKOFF_MS;
+    invalidateWhepUrl(entry.monitorId, 'high');
+    if (entry.refCount > 0) negotiate(entry);
+  }, 1_000);
+}
+
+const isMainPath = (path) => !/_(sub|low)(_h264)?$/.test(path);
+
+/**
+ * Swap a fullscreen entry from the grid stream to the main stream without a
+ * black frame: open a second connection to main, decode it off-screen until
+ * its first frame, then hand subscribers the new MediaStream and close the
+ * old connection. If the backend can't serve main yet (NVR slow / stalled /
+ * at its session limit) it answers with the sub path; we keep the sub
+ * playing and try again in MAIN_RETRY_MS while someone still wants 'high'.
+ */
+async function upgradeToMain(entry) {
+  if (entry.upgrading || entry.onMain || suspended) return;
+  if ((entry.mainBackoffUntil || 0) > Date.now()) {
+    setTimeout(() => {
+      if (entry.refCount > 0 && entry.quality === 'high' && registry.get(entry.monitorId) === entry) upgradeToMain(entry);
+    }, entry.mainBackoffUntil - Date.now());
+    return;
+  }
+  entry.upgrading = true;
+  const startEpoch = entry.epoch;
+  const stillWanted = () => entry.epoch === startEpoch && entry.refCount > 0 && entry.quality === 'high' && registry.get(entry.monitorId) === entry;
+  try {
+    const { data } = await api.get(`/stream/start/${encodeURIComponent(entry.monitorId)}`, { params: { quality: 'high' } });
+    const path = data?.webrtcUrl ? new URL(data.webrtcUrl, WHEP_BASE).pathname.replace(/\/$/, '') : '';
+    if (!stillWanted()) return;
+    if (!path || !isMainPath(path)) {
+      setTimeout(() => { if (stillWanted()) upgradeToMain(entry); }, MAIN_RETRY_MS);
+      return;
+    }
+    const url = `${WHEP_BASE}${path}/whep`;
+    const epoch = await swapConnection(entry, url, stillWanted, { onMain: true });
+    whepUrls.set(`${entry.monitorId}|high`, url);
+    watchMainFrames(entry, epoch);
+  } catch {
+    if (stillWanted()) setTimeout(() => { if (stillWanted()) upgradeToMain(entry); }, MAIN_RETRY_MS);
+  } finally {
+    entry.upgrading = false;
+  }
+}
+
+/**
+ * Back from main to the grid stream once nobody needs main any more (a tile
+ * left fullscreen). Main costs the customer's uplink several sub-streams'
+ * worth, and the NVR serves only so much (docs/14), so it is not kept for a
+ * thumbnail. Same black-frame-free swap as the upgrade.
+ */
+async function downgradeFromMain(entry) {
+  if (!entry.onMain || entry.upgrading || suspended) return;
+  entry.upgrading = true;
+  const startEpoch = entry.epoch;
+  const stillWanted = () => entry.epoch === startEpoch && entry.refCount > 0 && entry.quality !== 'high' && registry.get(entry.monitorId) === entry;
+  try {
+    const url = await resolveWhepUrl(entry.monitorId, entry.quality);
+    if (!stillWanted()) return;
+    await swapConnection(entry, url, stillWanted, { onMain: false });
+  } catch {
+    // Keep main playing; the next quality change tries again.
+  } finally {
+    entry.upgrading = false;
+  }
+}
+
+/**
+ * Open a second connection to `url`, decode it off-screen until its first
+ * frame (so the visible player never shows black while a decoder waits for a
+ * keyframe), then hand subscribers the new MediaStream and close the old
+ * connection. Throws if it can't; the caller's current stream keeps playing.
+ * Returns the entry's new epoch.
+ */
+async function swapConnection(entry, url, stillWanted, { onMain }) {
+  let pc = null;
+  let probe = null;
+  try {
+    const { iceServers, available: turnAvailable } = await getIceServers();
+    pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'all' });
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+    const streamP = new Promise((res) => pc.addEventListener('track', (e) => e.streams[0] && res(e.streams[0])));
+    await pc.setLocalDescription(await pc.createOffer());
+    await waitIceGatheringComplete(pc, turnAvailable ? ICE_GATHER_TIMEOUT_TURN_MS : ICE_GATHER_TIMEOUT_MS);
+    const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp });
+    if (!resp.ok) throw new Error(`WHEP ${resp.status}`);
+    await pc.setRemoteDescription({ type: 'answer', sdp: await resp.text() });
+    const stream = await streamP;
+    probe = document.createElement('video');
+    probe.muted = true;
+    probe.playsInline = true;
+    probe.srcObject = stream;
+    probe.play?.().catch(() => {});
+    await new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error('swap: no frame')), MAIN_FIRST_FRAME_TIMEOUT_MS);
+      const done = () => { clearTimeout(t); res(); };
+      if (probe.requestVideoFrameCallback) probe.requestVideoFrameCallback(done);
+      else probe.addEventListener('loadeddata', done, { once: true });
+    });
+    if (!stillWanted()) throw new Error('no longer wanted');
+    const old = entry.pc;
+    const epoch = ++entry.epoch;
+    entry.pc = pc;
+    entry.mediaStream = stream;
+    entry.onMain = onMain;
+    entry.state = 'streaming';
+    entry.failures = 0;
+    pc = null; // owned by the entry now
+    watchIce(entry, entry.pc, epoch);
+    notify(entry);
+    setTimeout(() => { try { old?.close(); } catch { /* closed */ } }, 1_000);
+    return epoch;
+  } finally {
+    if (pc) { try { pc.close(); } catch { /* closed */ } }
+    if (probe) setTimeout(() => { probe.srcObject = null; }, 2_000);
+  }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────

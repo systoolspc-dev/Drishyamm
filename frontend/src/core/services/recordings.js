@@ -52,6 +52,19 @@ export function getStreamUrl(groupId, key) {
 }
 
 /**
+ * Build a URL that exports a single trimmed MP4 covering [start, end] (epoch ms)
+ * for one camera — the backend concatenates the cloud clips over that span and
+ * cuts the result to the exact range. Loaded directly by the browser (anchor
+ * download), so the auth token rides in the query like getStreamUrl.
+ */
+export function getExportUrl(groupId, monitorId, start, end, name) {
+  const token = localStorage.getItem('auth_token') || '';
+  const qs = new URLSearchParams({ monitorId, start: String(start), end: String(end), token });
+  if (name) qs.set('name', name);
+  return `${API_URL}/groups/${groupId}/recordings/export?${qs.toString()}`;
+}
+
+/**
  * Build a backend URL that returns the first-frame JPEG thumbnail for a recording.
  * The backend runs FFmpeg and caches the result for 24 h (Cache-Control: public max-age=86400).
  * Auth token is passed as a query param (same pattern as getStreamUrl).

@@ -335,7 +335,7 @@ export default function CameraHealth() {
           </section>
         ) : (
           <RequireCameras
-            description="Add cameras from Camera Setup to start monitoring their health, connectivity and streaming performance."
+            description="Add your cameras to start monitoring their health, connectivity and streaming performance."
             benefits={HEALTH_BENEFITS}
           >
             {error ? (

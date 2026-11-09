@@ -26,6 +26,7 @@ const restrictedZoneRoutes = require('./restrictedZone.routes');
 const playbackRoutes = require('./playback.routes');
 const wallLayoutRoutes = require('./wallLayout.routes');
 const reportRoutes = require('./reports.routes');
+const edgeRoutes = require('./edge.routes');
 
 const router = Router();
 
@@ -37,6 +38,8 @@ router.use('/payment', paymentRoutes);
 router.use('/subscription', subscriptionRoutes);
 router.use('/stream', streamRoutes);
 router.use('/internal', internalRoutes);
+// Site relays (drishyam-site-relay.ps1) asking for NVR replays to push up.
+router.use('/edge', edgeRoutes);
 router.use('/ai', aiRoutes);
 // Head-count history + reports (see docs/OCCUPANCY_LOGIC.md)
 router.use('/occupancy', occupancyRoutes);

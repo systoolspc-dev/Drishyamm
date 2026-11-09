@@ -1,5 +1,10 @@
 const { v4: uuidv4 } = require('uuid');
 const { spawn }       = require('node:child_process');
+const os              = require('node:os');
+const path            = require('node:path');
+const fs              = require('node:fs');
+const fsp             = require('node:fs/promises');
+const { pipeline }    = require('node:stream/promises');
 const asyncHandler    = require('../middleware/asyncHandler');
 const { CameraGroup, Camera, sequelize } = require('../models');
 const streamingService = require('../services/drishyamStreaming.service');
@@ -692,19 +697,17 @@ const getGroupRecordings = asyncHandler(async (req, res) => {
   const page  = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
 
-  // Local-first: serve from the on-disk recordings volume (fast, no cloud
-  // dependency — ideal for on-prem/demo). Fall back to S3 only when nothing is
-  // on local disk for this group.
-  let allRecordings = await localRecordings.listGroupRecordings(group.cameras || [], date || null);
-  if (allRecordings.length === 0) {
-    try {
-      allRecordings = await s3Service.listGroupRecordings(req.user.id, group.name, date || null);
-    } catch (err) {
-      logger.warn('getGroupRecordings: local empty + S3 unavailable', { error: err.message });
-      allRecordings = [];
-    }
-  }
-  if (camera) allRecordings = allRecordings.filter((r) => r.cameraName === camera);
+  // Every camera's clips from BOTH stores (see cameraRecordingsMerged): the old
+  // local-first rule hid every uploaded clip whenever one fresh, not-yet-
+  // uploaded segment sat on local disk. Rows carry the camera's display name
+  // so local and cloud clips group under the same camera. Newest first.
+  const targets = (group.cameras || []).filter((c) => !camera || c.name === camera);
+  const perCamera = await Promise.all(targets.map(async (cam) => (
+    (await cameraRecordingsMerged(req.user.id, group, cam, date || null))
+      .map((r) => ({ ...r, cameraName: cam.name, monitorId: cam.monitorId }))
+  )));
+  let allRecordings = perCamera.flat()
+    .sort((a, b) => `${b.date}${b.filename}`.localeCompare(`${a.date}${a.filename}`));
 
   const isLocal = allRecordings.length > 0 && String(allRecordings[0].key).startsWith('cam_');
 
@@ -747,13 +750,39 @@ const getCameraRecordings = asyncHandler(async (req, res) => {
   });
   if (!camera) throw new AppError('Camera not found.', 404);
 
-  let recordings = await localRecordings.listGroupRecordings([camera], req.query.date || null);
-  if (recordings.length === 0) {
-    try { recordings = await s3Service.listRecordings(req.user.id, group.name, camera.name, req.query.date || null); }
-    catch { recordings = []; }
-  }
+  const recordings = await cameraRecordingsMerged(req.user.id, group, camera, req.query.date || null);
   res.json({ success: true, data: recordings });
 });
+
+/**
+ * One camera's recordings from BOTH stores. Uploaded clips live in the cloud
+ * bucket and their local segments are deleted (RECORDING_KEEP_LOCAL=0), while
+ * the newest few minutes are still on local disk waiting to be stitched. The
+ * old local-first rule ("cloud only if local is empty") therefore hid every
+ * uploaded clip whenever a single fresh segment existed, so a day's timeline
+ * showed only its last few minutes. Merge the two, and drop a local segment
+ * whose start already falls inside an uploaded clip (the brief window between
+ * upload and local delete) so nothing plays twice. Every row carries `date`.
+ */
+async function cameraRecordingsMerged(userId, group, camera, date) {
+  const local = await localRecordings.listGroupRecordings([camera], date);
+  let cloud = [];
+  try {
+    cloud = (await s3Service.listRecordings(userId, group.name, camera.name, date))
+      .map((r) => ({ ...r, date: r.date || String(r.key).split('/')[4] || date, source: 'cloud' }));
+  } catch (err) {
+    logger.warn('recordings: S3 list failed; serving local only', { monitorId: camera.monitorId, error: err.message });
+  }
+  const spans = cloud.map((r) => exportClipTimes(r.date, r.filename)).filter(Boolean);
+  const localKept = local
+    .filter((r) => {
+      const t = exportClipTimes(r.date, r.filename);
+      return !t || !spans.some((s) => t.start >= s.start && t.start < s.end);
+    })
+    .map((r) => ({ ...r, source: 'local' }));
+  return [...cloud, ...localKept]
+    .sort((a, b) => `${a.date}${a.filename}`.localeCompare(`${b.date}${b.filename}`));
+}
 
 const getRecordingPlayUrl = asyncHandler(async (req, res) => {
   const { key } = req.query;
@@ -800,56 +829,69 @@ const getThumbnailForRecording = asyncHandler(async (req, res) => {
   req.on('close', () => { clientGone = true; });
 
   try {
-    const presignedUrl = String(key).startsWith('cam_')
-      ? localRecordings.safeResolve(key)            // local file path for ffmpeg -i
-      : await s3Service.getPlaybackUrl(key, 300);
-    const ff = spawn('ffmpeg', [
-      '-loglevel', 'error', '-i', presignedUrl,
-      '-vframes', '1', '-q:v', '4', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
-    ]);
+    // The 10PB endpoint randomly resets reads (see streamS3Resumable); a fresh
+    // presigned URL and another try almost always succeeds, so retry before
+    // showing "No preview".
+    let jpeg = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3 && !clientGone; attempt += 1) {
+      try {
+        const presignedUrl = String(key).startsWith('cam_')
+          ? localRecordings.safeResolve(key)            // local file path for ffmpeg -i
+          : await s3Service.getPlaybackUrl(key, 300);
+        const ff = spawn('ffmpeg', [
+          // 10PB resets reads part-way; without an I/O timeout ffmpeg sat on a dead
+          // connection until the 20 s cap. 6 s, then the next attempt gets a fresh URL.
+          '-loglevel', 'error', ...(String(presignedUrl).startsWith('http') ? ['-rw_timeout', '6000000'] : []), '-i', presignedUrl,
+          '-vframes', '1', '-q:v', '4', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+        ]);
 
-    req.on('close', () => ff.kill('SIGKILL'));
-    const chunks  = [];
-    let ffStderr  = '';
-    ff.stdout.on('data', (chunk) => chunks.push(chunk));
-    ff.stderr.on('data', (chunk) => { ffStderr += chunk; });
+        req.on('close', () => ff.kill('SIGKILL'));
+        const chunks  = [];
+        let ffStderr  = '';
+        ff.stdout.on('data', (chunk) => chunks.push(chunk));
+        ff.stderr.on('data', (chunk) => { ffStderr += chunk; });
 
-    await new Promise((resolve, reject) => {
-      let settled = false;
-      // Without this, an ffmpeg that hangs (stalled S3 fetch, wedged decode)
-      // while the client stays connected never fires close/error — the await
-      // hangs forever and the semaphore slot is never released, eventually
-      // starving all thumbnail generation.
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        logger.error('thumbnail: ffmpeg timed out; killing', { key });
-        try { ff.kill('SIGKILL'); } catch (_) {}
-        reject(new Error('ffmpeg thumbnail timed out'));
-      }, 20_000);
-      timer.unref?.();
-      ff.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (code !== 0) {
-          logger.error('thumbnail: ffmpeg exited non-zero', { key, code, stderr: ffStderr.slice(-300) });
-          reject(new Error(`ffmpeg exited ${code}`));
-        } else {
-          resolve();
-        }
-      });
-      ff.on('error', (e) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        reject(e);
-      });
-    });
+        await new Promise((resolve, reject) => {
+          let settled = false;
+          // Without this, an ffmpeg that hangs (stalled S3 fetch, wedged decode)
+          // while the client stays connected never fires close/error — the await
+          // hangs forever and the semaphore slot is never released, eventually
+          // starving all thumbnail generation.
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            logger.error('thumbnail: ffmpeg timed out; killing', { key });
+            try { ff.kill('SIGKILL'); } catch (_) {}
+            reject(new Error('ffmpeg thumbnail timed out'));
+          }, 20_000);
+          timer.unref?.();
+          ff.on('close', (code) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (code !== 0) {
+              logger.error('thumbnail: ffmpeg exited non-zero', { key, code, stderr: ffStderr.slice(-300) });
+              reject(new Error(`ffmpeg exited ${code}`));
+            } else {
+              resolve();
+            }
+          });
+          ff.on('error', (e) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            reject(e);
+          });
+        });
 
+        jpeg = Buffer.concat(chunks);
+        if (jpeg.length) break;
+        lastErr = new Error('ffmpeg produced empty output');
+      } catch (e) { lastErr = e; }
+    }
     if (clientGone) return;
-    const jpeg = Buffer.concat(chunks);
-    if (jpeg.length === 0) throw new Error('ffmpeg produced empty output');
+    if (!jpeg || jpeg.length === 0) throw lastErr || new Error('thumbnail failed');
 
     redis.setBuffer(cacheKey, jpeg, redis.THUMB_TTL);
     res.writeHead(200, {
@@ -863,6 +905,96 @@ const getThumbnailForRecording = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * Stream a cloud clip to the browser, surviving connection resets.
+ *
+ * The 10PB endpoint randomly resets a GET part-way through the object
+ * (measured: ~2 in 8 full-clip reads), and a plain pipe then either truncated
+ * the response or left it hanging — the <video> froze or stopped mid-clip.
+ * Here the response headers come from the first GET, and if the body breaks
+ * before every promised byte is sent, we re-request just the remainder
+ * (Range: bytes=<next>-<end>) and keep writing to the same response, so the
+ * player never sees the break. Gives up after a few consecutive failures.
+ */
+const S3_STREAM_RETRIES = 4;
+async function streamS3Resumable(req, res, key, range) {
+  let clientGone = false;
+  let current = null;
+  req.on('close', () => { clientGone = true; try { current?.destroy(); } catch (_) {} });
+
+  // First GET — retried, since a reset can also land before any bytes arrive.
+  let first;
+  for (let attempt = 1; ; attempt += 1) {
+    try { first = await s3Service.getReadStream(key, range); break; } catch (err) {
+      if (attempt > S3_STREAM_RETRIES || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {
+        if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) throw new AppError('Recording not found.', 404);
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 250 * attempt));
+    }
+  }
+
+  // Absolute byte window we promised the client.
+  let startByte = 0;
+  let endByte = (first.contentLength || 0) - 1;
+  const m = /bytes\s+(\d+)-(\d+)\/(\d+|\*)/.exec(first.contentRange || '');
+  if (m) { startByte = parseInt(m[1], 10); endByte = parseInt(m[2], 10); }
+  const total = endByte - startByte + 1;
+
+  const headers = {
+    'Content-Type': first.contentType || 'video/mp4',
+    'Accept-Ranges': 'bytes',
+    'Cross-Origin-Resource-Policy': 'cross-origin',
+    'Cache-Control': 'no-store',
+  };
+  if (req.query.download) {
+    headers['Content-Disposition'] = `attachment; filename="${String(key).split('/').pop() || 'clip.mp4'}"`;
+  }
+  if (range && first.contentRange) headers['Content-Range'] = first.contentRange;
+  if (first.contentLength) headers['Content-Length'] = first.contentLength;
+  res.writeHead(first.statusCode, headers);
+
+  let sent = 0;
+  let failures = 0;
+  let body = first.stream;
+  while (!clientGone && sent < total) {
+    current = body;
+    body.on('error', () => {}); // a broken socket can emit twice; never let it go unhandled
+    const before = sent;
+    // eslint-disable-next-line no-await-in-loop
+    const outcome = await new Promise((resolve) => {
+      body.on('data', (chunk) => {
+        let c = chunk;
+        if (sent + c.length > total) c = c.subarray(0, total - sent);
+        sent += c.length;
+        if (!res.write(c)) { body.pause(); res.once('drain', () => body.resume()); }
+      });
+      body.once('end', () => resolve('end'));
+      body.once('error', (err) => resolve(err));
+    });
+    if (clientGone || sent >= total) break;
+    try { body.destroy?.(); } catch (_) {}
+
+    // Body ended early or errored: resume from the next unsent byte.
+    failures = sent > before ? 1 : failures + 1;
+    if (failures > S3_STREAM_RETRIES) {
+      logger.warn('streamRecording: giving up after repeated S3 resets', { key, sent, total, error: outcome?.message || outcome });
+      break;
+    }
+    logger.info('streamRecording: S3 read broke, resuming', { key, at: startByte + sent, of: endByte + 1, error: outcome?.code || outcome?.message || outcome });
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const next = await s3Service.getReadStream(key, `bytes=${startByte + sent}-${endByte}`);
+      body = next.stream;
+    } catch (err) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 300 * failures));
+      body = { on() {}, once(ev, fn) { if (ev === 'error') setImmediate(() => fn(err)); }, destroy() {} };
+    }
+  }
+  if (sent >= total) res.end(); else { try { res.destroy(); } catch (_) {} }
+}
+
 const streamRecording = asyncHandler(async (req, res) => {
   const { key } = req.query;
   if (!key) throw new AppError('key query parameter is required.', 400);
@@ -875,7 +1007,7 @@ const streamRecording = asyncHandler(async (req, res) => {
     streamData = localRecordings.getReadStream(key, range);
   } else {
     if (!key.startsWith(`recordings/${req.user.id}/`)) throw new AppError('Access denied.', 403);
-    streamData = await s3Service.getReadStream(key, range);
+    return streamS3Resumable(req, res, key, range);
   }
   const { stream, contentLength, contentType, contentRange, statusCode } = streamData;
 
@@ -929,6 +1061,166 @@ const getRecordingDownloadUrl = asyncHandler(async (req, res) => {
   res.json({ success: true, downloadUrl, filename });
 });
 
+// ── Cloud clip export ─────────────────────────────────────────────────────────
+// GET /api/groups/:groupId/recordings/export?monitorId=&start=&end=&name=&token=
+// Cut a single MP4 covering [start,end] from the cloud/local recordings of one
+// camera. The NVR export re-replays from the NVR; the cloud has discrete MP4
+// clips instead, so we concat the clips that overlap the window and trim the
+// result to the exact [start,end] with ffmpeg (re-encoded, so the cut is
+// frame-accurate, not keyframe-rounded). Streamed as a fragmented MP4 so the
+// browser saves it as it arrives.
+const EXPORT_MAX_MS = parseInt(process.env.RECORDING_EXPORT_MAX_MS || '1800000', 10); // 30 min
+const p2exp = (n) => String(n).padStart(2, '0');
+function exportDayKey(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${p2exp(d.getMonth() + 1)}-${p2exp(d.getDate())}`;
+}
+// Absolute [start,end] of a clip, from its date + "HH-MM-SS[_to_HH-MM-SS]" name.
+// The filename is device-local wall-clock and the backend runs in that same
+// zone (TZ=Asia/Kolkata), so a local Date constructor lines up with playback.
+function exportClipTimes(dateStr, filename) {
+  const s = String(filename || '').match(/^(\d{2})-(\d{2})-(\d{2})/);
+  if (!s || !dateStr) return null;
+  const [Y, M, D] = dateStr.split('-').map(Number);
+  const start = new Date(Y, M - 1, D, +s[1], +s[2], +s[3]).getTime();
+  const e = String(filename).match(/_to_(\d{2})-(\d{2})-(\d{2})/);
+  let end;
+  if (e) {
+    end = new Date(Y, M - 1, D, +e[1], +e[2], +e[3]).getTime();
+    if (end < start) end += 86400000; // crossed midnight
+  } else {
+    end = start + 60000; // raw segment with no end in the name — assume ~1 min
+  }
+  return { start, end };
+}
+
+const exportRecordingRange = asyncHandler(async (req, res) => {
+  const group = await CameraGroup.findOne({
+    where: { id: req.params.groupId, userId: req.user.id },
+    include: [{ model: Camera, as: 'cameras' }],
+  });
+  if (!group) throw new AppError('Camera group not found.', 404);
+
+  const monitorId = String(req.query.monitorId || '');
+  const start = parseInt(req.query.start, 10);
+  const end   = parseInt(req.query.end, 10);
+  if (!monitorId) throw new AppError('monitorId is required.', 400);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    throw new AppError('Valid start and end (epoch ms, end after start) are required.', 400);
+  }
+  if (end - start > EXPORT_MAX_MS) {
+    throw new AppError(`Clip is too long. The maximum is ${Math.round(EXPORT_MAX_MS / 60000)} minutes.`, 400);
+  }
+  const camera = (group.cameras || []).find((c) => c.monitorId === monitorId);
+  if (!camera) throw new AppError('Camera not found in this group.', 404);
+
+  // Gather the camera's clips for the day(s) the window spans. Local disk first
+  // (fast), then the cloud bucket — the same order playback resolves them.
+  const days = [...new Set([exportDayKey(start), exportDayKey(end)])];
+  const recs = [];
+  for (const day of days) {
+    recs.push(...(await cameraRecordingsMerged(req.user.id, group, camera, day)));
+  }
+
+  // Keep the clips that overlap [start,end], in order.
+  const clips = recs
+    .map((r) => ({ rec: r, t: exportClipTimes(r.date, r.filename) }))
+    .filter((c) => c.t && c.t.end > start && c.t.start < end)
+    .sort((a, b) => a.t.start - b.t.start);
+
+  if (!clips.length) throw new AppError('No footage in the selected range.', 404);
+
+  // Resolve each clip to a LOCAL file for ffmpeg. Cloud clips are downloaded
+  // through the S3 SDK first: letting ffmpeg read the presigned https URL
+  // directly fails on the 10PB endpoint — it resets the long ranged reads an
+  // MP4 demux needs ("Connection reset by peer"), and the export came out
+  // truncated (a 5-min window yielded ~2 min). The SDK retries and streams the
+  // whole object in one GET.
+  const workDir = path.join(os.tmpdir(), `export-${uuidv4()}`);
+  await fsp.mkdir(workDir, { recursive: true });
+  const cleanup = () => { fsp.rm(workDir, { recursive: true, force: true }).catch(() => {}); };
+
+  let inputs;
+  try {
+    inputs = await Promise.all(clips.map(async (c, i) => {
+      const key = c.rec.key;
+      if (String(key).startsWith('cam_')) return localRecordings.safeResolve(key);
+      const dest = path.join(workDir, `${String(i).padStart(3, '0')}.mp4`);
+      let lastErr;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const { stream } = await s3Service.getReadStream(key);
+          await pipeline(stream, fs.createWriteStream(dest));
+          return dest;
+        } catch (err) { lastErr = err; }
+      }
+      throw lastErr;
+    }));
+  } catch (err) {
+    cleanup();
+    logger.error('export: fetching clips failed', { error: err.message });
+    throw new AppError('Could not fetch the recordings for this range. Please try again.', 502);
+  }
+
+  // Cut to the window: the output starts `offsetSec` into the first clip (an
+  // output-side -ss, which decodes and discards, so it is frame-accurate), and
+  // the last clip gets an `outpoint` at the window's end. Using an outpoint
+  // instead of a fixed -t keeps the cut exact even when the window has a gap in
+  // the footage (the concat closes gaps, so a duration would run past `end`).
+  const firstStart = clips[0].t.start;
+  const offsetSec  = Math.max(0, (start - firstStart) / 1000);
+  const last       = clips[clips.length - 1];
+  const lastOut    = Math.max(0, (Math.min(end, last.t.end) - last.t.start) / 1000);
+
+  const listPath = path.join(workDir, 'list.txt');
+  const listBody = inputs.map((u, i) => {
+    const line = `file '${String(u).replace(/'/g, "'\\''")}'`;
+    return i === inputs.length - 1 && last.t.end > end ? `${line}\noutpoint ${lastOut.toFixed(3)}` : line;
+  }).join('\n');
+  await fsp.writeFile(listPath, `${listBody}\n`, 'utf8');
+
+  const rawName = String(req.query.name || `${camera.name}_${exportDayKey(start)}`);
+  let filename = rawName.replace(/[/\\:*?"<>|]+/g, '_').replace(/\s+/g, '_').trim() || 'clip';
+  if (!/\.mp4$/i.test(filename)) filename += '.mp4';
+
+  const ff = spawn('ffmpeg', [
+    '-loglevel', 'error',
+    '-f', 'concat', '-safe', '0', '-i', listPath,
+    '-ss', offsetSec.toFixed(3), '-t', ((end - start) / 1000).toFixed(3),
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    '-f', 'mp4', 'pipe:1',
+  ]);
+
+  let started = false;
+  let ffErr = '';
+  const headers = {
+    'Content-Type': 'video/mp4',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Cache-Control': 'no-store',
+  };
+
+  const kill = () => { try { ff.kill('SIGKILL'); } catch (_) {} };
+  const timer = setTimeout(() => { logger.error('export: ffmpeg timed out', { groupId: req.params.groupId }); kill(); }, 5 * 60_000);
+  timer.unref?.();
+  req.on('close', () => { kill(); });
+
+  ff.stdout.on('data', (chunk) => {
+    if (!started) { started = true; res.writeHead(200, headers); }
+    if (!res.write(chunk)) { ff.stdout.pause(); res.once('drain', () => ff.stdout.resume()); }
+  });
+  ff.stderr.on('data', (b) => { ffErr += b.toString(); });
+  ff.on('error', (e) => { clearTimeout(timer); cleanup(); logger.error('export: ffmpeg spawn error', { error: e.message }); if (!res.headersSent) res.status(500).json({ success: false, message: 'Export failed to start.' }); });
+  ff.on('close', (code) => {
+    clearTimeout(timer);
+    cleanup();
+    if (started) { res.end(); return; }
+    logger.error('export: ffmpeg produced no output', { code, stderr: ffErr.slice(-400) });
+    if (!res.headersSent) res.status(500).json({ success: false, message: 'Could not build the clip.' });
+  });
+});
+
 module.exports = {
   listGroups, getGroup, createGroup, updateGroup, deleteGroup,
   syncGroup, reconfigureGroup, deleteCameraFromGroup,
@@ -937,4 +1229,5 @@ module.exports = {
   getGroupRecordings, getCameraRecordings,
   getRecordingPlayUrl, streamRecording,
   getThumbnailForRecording, getRecordingDownloadUrl,
+  exportRecordingRange,
 };

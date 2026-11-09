@@ -19,6 +19,9 @@ import { useDigitalZoom } from '@/core/hooks/useDigitalZoom';
  */
 export default function PlayerFrame({
   videoRef,
+  // Optional second <video> stacked in the same stage (relay player: sub and
+  // main side by side; the player toggles `hidden` to show whichever is live).
+  secondVideoRef = null,
   monitorId,
   state,                 // 'loading' | 'playing' | 'error'
   error,
@@ -44,14 +47,27 @@ export default function PlayerFrame({
     : 'auto';
 
   const videoEl = (
-    <video
-      ref={videoRef}
-      muted={muted}
-      playsInline
-      autoPlay
-      controls={controls && !(digitalZoom && zoom.isZoomed)}
-      className={`w-full h-full ${objectFit}`}
-    />
+    <>
+      <video
+        ref={videoRef}
+        muted={muted}
+        playsInline
+        autoPlay
+        controls={controls && !(digitalZoom && zoom.isZoomed)}
+        className={`w-full h-full ${objectFit}`}
+      />
+      {secondVideoRef && (
+        <video
+          ref={secondVideoRef}
+          hidden
+          muted={muted}
+          playsInline
+          autoPlay
+          controls={controls && !(digitalZoom && zoom.isZoomed)}
+          className={`w-full h-full ${objectFit}`}
+        />
+      )}
+    </>
   );
 
   return (

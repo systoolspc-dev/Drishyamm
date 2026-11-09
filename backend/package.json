@@ -53,7 +53,8 @@
     "socket.io": "^4.8.1",
     "stripe": "^20.3.1",
     "uuid": "^11.1.1",
-    "winston": "^3.19.0"
+    "winston": "^3.19.0",
+    "ws": "~8.21.0"
   },
   "_overrides_note": "uuid pinned to patch the moderate advisory in sequelize's transitive dep (buffer bounds check). Safe patch bump; sequelize v6 works with uuid 11.x.",
   "overrides": {

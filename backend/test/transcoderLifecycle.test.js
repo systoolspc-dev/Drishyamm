@@ -46,8 +46,16 @@ jest.mock('../src/queues', () => ({
   getQueue: jest.fn(),
   getQueueEvents: jest.fn(),
 }));
+// No NVR host on record → per-NVR open pacing (paceNvrOpen) is skipped, so the
+// lifecycle under test isn't held up by the pacing queue or a real DB lookup.
+jest.mock('../src/models', () => ({
+  Camera: { findOne: jest.fn(async () => null) },
+}));
 
 const { spawn } = require('node:child_process');
+// Software encoder: with TRANSCODER_ALLOW_HW=true (as in the GPU containers) the
+// service first probes `ffmpeg -encoders`, which the mocked spawn never answers.
+process.env.TRANSCODER_ALLOW_HW = 'false';
 const transcoder = require('../src/services/transcoder.service');
 
 const flush = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };

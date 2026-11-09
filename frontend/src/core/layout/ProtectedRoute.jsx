@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/core/store/authStore';
 import { routeAllowed } from '@/core/nav/entitlements';
 import api from '@/core/services/api';
+import { useStreamPrewarm } from '@/core/hooks/useStreamPrewarm';
 
 // The user object is read from localStorage at login, so a feature an admin
 // switches off (or on) in the admin console would otherwise only reach this
@@ -37,6 +38,8 @@ export default function ProtectedRoute({ children }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const user = useAuthStore((state) => state.user);
   const { pathname } = useLocation();
+  // Logged in → keep the user's camera streams warm so tiles open instantly.
+  useStreamPrewarm(isAuthenticated);
 
   useEffect(() => {
     if (!isAuthenticated) return undefined;

@@ -11,6 +11,9 @@ import { PageCard } from '@/core/layout/OperationsPage';
 import { cameraHealthService } from '@/core/services/cameraHealth';
 import { aiService } from '@/core/services/ai';
 import { playbackService } from '@/core/services/playback';
+import { relaySupported } from '@/core/services/liveRelay';
+import { canDecodeHevc } from '@/core/services/codecSupport';
+import { API_BASE } from '@/core/config/endpoints';
 import CameraPicker from '@/core/pages/playback/CameraPicker';
 import PlaybackTimeline from '@/core/pages/playback/PlaybackTimeline';
 import EventsPanel from '@/core/pages/playback/EventsPanel';
@@ -118,6 +121,10 @@ export default function NvrPlayback() {
   const dateInputRef = useRef(null);
   const fromInputRef = useRef(null);
   const hlsRef = useRef(null);
+  // Fast path: the NVR's own stream over the live relay (see attachRelay).
+  const relayRef = useRef(null);
+  const relayOffRef = useRef(false);   // this browser couldn't play it: HLS from now on
+  const fallbackRef = useRef(null);
   const sessionRef = useRef(null);    // { gen, monitorId, startMs, endMs, limit, pathName, mediaBase, played, thumbed, restarts }
   const genRef = useRef(0);           // bumps on every new session; stale async work checks it
   const winRef = useRef(win);
@@ -267,6 +274,13 @@ export default function NvrPlayback() {
       try { hlsRef.current.destroy(); } catch { /* ignore */ }
       hlsRef.current = null;
     }
+    const r = relayRef.current;
+    relayRef.current = null;
+    if (r) {
+      r.dead = true;
+      try { r.ws.close(); } catch { /* closed */ }
+      if (r.url) { try { URL.revokeObjectURL(r.url); } catch { /* ignore */ } }
+    }
     const v = videoRef.current;
     if (v) {
       try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* ignore */ }
@@ -341,6 +355,107 @@ export default function NvrPlayback() {
     run();
   }, [setPhase]);
 
+  // Fast path: the NVR's own stream (H.265 as recorded, no server transcode)
+  // over the backend live relay WebSocket into MediaSource. Every frame is
+  // appended in order (this is a recording, never skip ahead like live view).
+  // If the browser can't decode it, or nothing arrives, replay the HLS way.
+  const attachRelay = useCallback((ticket, gen) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const MSE = window.ManagedMediaSource || window.MediaSource;
+    const wsBase = /^https?:/.test(API_BASE)
+      ? API_BASE.replace(/^http/, 'ws')
+      : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${API_BASE}`;
+    const ws = new WebSocket(`${wsBase}/api/stream/live?ticket=${encodeURIComponent(ticket)}`);
+    ws.binaryType = 'arraybuffer';
+    const r = { ws, ms: null, sb: null, url: null, queue: [], mime: null, expectInit: false, started: false, dead: false, lastTrim: 0 };
+    relayRef.current = r;
+
+    const trim = (force) => {
+      if (!r.sb || r.sb.updating || !video.buffered.length) return;
+      const now = performance.now();
+      if (!force && now - r.lastTrim < 10_000) return;
+      r.lastTrim = now;
+      const cut = video.currentTime - 120;           // keep 2 min behind for instant rewind
+      if (cut > video.buffered.start(0) + 1) { try { r.sb.remove(video.buffered.start(0), cut); } catch { /* ignore */ } }
+    };
+    const pump = () => {
+      if (r.dead || !r.sb || r.sb.updating || !r.queue.length) return;
+      const next = r.queue.shift();
+      try { r.sb.appendBuffer(next); } catch (err) {
+        if (err?.name === 'QuotaExceededError') { r.queue.unshift(next); trim(true); }
+      }
+    };
+    const onUpdateEnd = () => {
+      if (r.dead || gen !== genRef.current) return;
+      if (!r.started && video.buffered.length) {
+        r.started = true;
+        const s = sessionRef.current;
+        if (s?.gen === gen) s.mediaBase = video.buffered.start(0);
+        video.currentTime = video.buffered.start(0);
+        setPhase('playing');
+        video.playbackRate = rateRef.current;
+        video.play().catch(() => {});
+      }
+      trim(false);
+      pump();
+    };
+    ws.onmessage = (e) => {
+      if (r.dead || gen !== genRef.current) return;
+      if (typeof e.data === 'string') {
+        let msg = null;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.type === 'init') {
+          if (!MSE || !MSE.isTypeSupported(msg.mime)) {
+            relayOffRef.current = true;
+            r.dead = true;
+            try { ws.close(); } catch { /* closed */ }
+            fallbackRef.current?.(gen);
+            return;
+          }
+          r.mime = msg.mime;
+          r.expectInit = !r.ms;                    // a second init (never sent for a replay) is ignored
+        }
+        return;
+      }
+      const u8 = new Uint8Array(e.data);
+      if (r.expectInit) {
+        r.expectInit = false;
+        r.ms = new MSE();
+        if (window.ManagedMediaSource && r.ms instanceof window.ManagedMediaSource) video.disableRemotePlayback = true;
+        r.url = URL.createObjectURL(r.ms);
+        video.removeAttribute('src');
+        video.src = r.url;
+        r.queue.push(u8);
+        r.ms.addEventListener('sourceopen', () => {
+          if (r.dead) return;
+          try {
+            r.sb = r.ms.addSourceBuffer(r.mime);
+            r.sb.mode = 'segments';
+            r.sb.addEventListener('updateend', onUpdateEnd);
+            pump();
+          } catch {
+            relayOffRef.current = true;
+            r.dead = true;
+            try { ws.close(); } catch { /* closed */ }
+            fallbackRef.current?.(gen);
+          }
+        }, { once: true });
+        return;
+      }
+      if (!r.ms) return;
+      r.queue.push(u8);
+      pump();
+    };
+    ws.onclose = () => {
+      if (r.dead || gen !== genRef.current) return;
+      // Closed before a single frame: the NVR had nothing, or refused. Let the
+      // HLS path try (it reports "no footage" properly). After playing, the
+      // stall check sees the end and carries on from there.
+      if (!r.started) fallbackRef.current?.(gen);
+    };
+  }, [setPhase]);
+
   // Replay from `target` (epoch ms). Inside the range it plays to the range's
   // end; outside it (day view) to the end of that day. Sessions are cut into
   // the backend's 6-hour slices and continue on their own.
@@ -374,16 +489,20 @@ export default function NvrPlayback() {
     setPhase('loading');
     if (!exportTouchedRef.current) setExportRange(clipAround(startMs));
     try {
-      const data = await playbackService.start({ monitorId: mon, start: iso(startMs), end: iso(endMs) });
+      // The server picks: H.265 NVRs only for browsers that decode it, H.264
+      // site relays for every browser. The init check below catches the rest.
+      const relay = !opts.noRelay && !relayOffRef.current && relaySupported();
+      const data = await playbackService.start({ monitorId: mon, start: iso(startMs), end: iso(endMs), relay, hevc: canDecodeHevc() });
       if (gen !== genRef.current) { playbackService.stop(data.pathName).catch(() => {}); return; }
       sessionRef.current.pathName = data.pathName;
-      attach(data.hlsUrl, gen);
+      if (data.mode === 'relay' && data.ticket) attachRelay(data.ticket, gen);
+      else attach(data.hlsUrl, gen);
     } catch (e) {
       if (gen !== genRef.current) return;
       setPhase('error');
       setError(e?.response?.data?.message || 'Could not start NVR playback.');
     }
-  }, [attach, setPhase, teardown]);
+  }, [attach, attachRelay, setPhase, teardown]);
 
   const onStreamLost = useCallback((gen) => {
     const s = sessionRef.current;
@@ -409,6 +528,12 @@ export default function NvrPlayback() {
   useEffect(() => {
     startRef.current = startSession;
     lostRef.current = onStreamLost;
+    // Fast path failed before playing: same moment again, the HLS way.
+    fallbackRef.current = (gen) => {
+      const s = sessionRef.current;
+      if (!s || s.gen !== gen) return;
+      startSession(s.startMs, { noRelay: true, restarts: s.restarts });
+    };
   }, [startSession, onStreamLost]);
 
   // A replay can die without an error (the NVR stops sending): no new video
@@ -496,7 +621,7 @@ export default function NvrPlayback() {
     const t = Math.min(target - (preroll ? PREROLL_MS : 0), Date.now() - 5000);
     const v = videoRef.current;
     const s = sessionRef.current;
-    if (v && s && hlsRef.current && s.mediaBase != null && phaseRef.current === 'playing' && t >= s.startMs && t <= s.endMs) {
+    if (v && s && (hlsRef.current || relayRef.current) && s.mediaBase != null && phaseRef.current === 'playing' && t >= s.startMs && t <= s.endMs) {
       const pos = s.mediaBase + (t - s.startMs) / 1000;
       for (let i = 0; i < v.buffered.length; i += 1) {
         if (pos >= v.buffered.start(i) && pos <= v.buffered.end(i) - 0.5) {
@@ -888,7 +1013,7 @@ export default function NvrPlayback() {
                       <p className="text-small text-white/60">
                         {camera
                           ? 'Or click any moment on the timeline, or an event. Footage is replayed from the NVR.'
-                          : 'Cameras added in Camera Setup appear in the picker above.'}
+                          : 'Cameras you add under Setup › Add cameras appear in the picker above.'}
                       </p>
                     </div>
                   </div>

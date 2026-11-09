@@ -228,7 +228,7 @@ export default function MonitorWallLive() {
         <p className="max-w-md text-body text-white/60">
           {layoutId
             ? 'It may have been deleted, or it belongs to another account.'
-            : 'Build one on the Monitor Wall page, then launch it from there.'}
+            : 'Build one on the Video wall page, then launch it from there.'}
         </p>
         <button
           type="button"
@@ -289,7 +289,7 @@ export default function MonitorWallLive() {
         <button
           type="button"
           onClick={exitWall}
-          title="Back to Monitor Wall (Esc)"
+          title="Back to Video wall (Esc)"
           className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 text-body font-semibold text-white transition hover:bg-white/10"
         >
           <X className="h-4 w-4" />

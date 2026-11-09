@@ -80,5 +80,7 @@ router.get('/:groupId/recordings/stream', ctrl.streamRecording);
 router.get('/:groupId/recordings/thumbnail', ctrl.getThumbnailForRecording);
 // GET /api/groups/:groupId/recordings/download?key=<s3-key>   → forced-download signed URL
 router.get('/:groupId/recordings/download', ctrl.getRecordingDownloadUrl);
+// GET /api/groups/:groupId/recordings/export?monitorId=&start=&end=  → cut+concat a single MP4 for [start,end]
+router.get('/:groupId/recordings/export', ctrl.exportRecordingRange);
 
 module.exports = router;

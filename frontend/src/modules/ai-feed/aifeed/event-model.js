@@ -38,7 +38,7 @@ export const CATEGORIES = [
   { id: 'perimeter', label: 'Perimeter & Safety' },
   { id: 'crowd',     label: 'Crowd & Count' },
   { id: 'faces',     label: 'Faces' },
-  { id: 'vehicles',  label: 'Vehicles / ANPR' },
+  { id: 'vehicles',  label: 'Vehicles' },
 ];
 
 // The "More AI" dropdown. Each entry is a sub-filter on the `more` category

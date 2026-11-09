@@ -74,24 +74,65 @@ function formatCameraSlug(slug) {
   return slug.replace(/---/g, ' - ').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function parseTimeFromFilename(filename) {
+// Leading wall-clock start time from a clip filename. Handles the stitched
+// clip "17-48-57_to_17-50-00_1m.mp4" and the raw segment "17-48-57-123456.mp4",
+// plus the legacy date-prefixed form. The filename is already in device-local
+// (IST) wall-clock, so we return it verbatim — no Date() parsing, no timezone
+// conversion (that was the source of the mismatch: the old code fell through to
+// the S3 upload time). Returns "HH:MM:SS" (24h) or null.
+function parseHMSFromFilename(filename) {
   if (!filename) return null;
-  const m = filename.match(/(\d{4}-\d{2}-\d{2})[T_](\d{2}[-:]?\d{2}[-:]?\d{2})/);
+  const withDate = filename.match(/\d{4}-\d{2}-\d{2}[T_](\d{2})[-:](\d{2})[-:](\d{2})/);
+  const m = withDate || filename.match(/^(\d{2})-(\d{2})-(\d{2})/);
   if (!m) return null;
-  return m[2].replace(/-/g, ':').slice(0, 5); // HH:MM
+  return `${m[1]}:${m[2]}:${m[3]}`;
 }
 
+// "17:48:57" -> "5:48:57 PM"
+function fmt12(hms) {
+  const [h, mi, s] = String(hms).split(':').map(Number);
+  if ([h, mi, s].some((n) => Number.isNaN(n))) return hms;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = ((h + 11) % 12) + 1;
+  return `${h12}:${String(mi).padStart(2, '0')}:${String(s).padStart(2, '0')} ${ampm}`;
+}
+
+// Size-based estimate — last resort only, for raw local segments whose name
+// carries no end time. Cloud clips always have an exact span (see clipDurationSec).
 function estimateDuration(sizeBytes) {
   if (!sizeBytes || sizeBytes < 100000) return null;
   const minutes = sizeBytes / (1024 * 1024 * 11.25);
   if (minutes < 0.25) return `~${Math.round(minutes * 60)}s`;
-  if (minutes >= 9.5)  return '10 min';
+  if (minutes >= 9.5)  return '~10 min';
   return `~${Math.round(minutes)} min`;
 }
 
+// Exact clip length in seconds from the stitched filename
+// "HH-MM-SS_to_HH-MM-SS_..", else the backend's durationSec if present.
+function clipDurationSec(rec) {
+  const m = (rec.filename || '').match(/(\d{2})-(\d{2})-(\d{2})_to_(\d{2})-(\d{2})-(\d{2})/);
+  if (m) {
+    const a = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
+    let b = (+m[4]) * 3600 + (+m[5]) * 60 + (+m[6]);
+    if (b < a) b += 24 * 3600; // clip crossed midnight
+    return b - a;
+  }
+  if (Number.isFinite(rec.durationSec) && rec.durationSec > 0) return rec.durationSec;
+  return null;
+}
+
+function durationLabel(rec) {
+  const sec = clipDurationSec(rec);
+  if (sec == null) return estimateDuration(rec.size); // raw local segment fallback
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+
 function getRecordingTime(filename, lastModified) {
-  const fromFile = parseTimeFromFilename(filename);
-  if (fromFile) return fromFile;
+  const fromFile = parseHMSFromFilename(filename);
+  if (fromFile) return fmt12(fromFile);
   if (!lastModified) return '—';
   const d = new Date(lastModified);
   return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -157,10 +198,17 @@ function recordingKind(rec) {
   return KIND_LABELS[raw.toLowerCase()] || null;
 }
 
-// 3-minute windows carry their start time directly; their synthetic filename
-// has no date for parseTimeFromFilename to find.
+// The clip's real start time: parsed from the filename (device-local/IST
+// wall-clock) first, then the backend's `time`, then the upload time as a last
+// resort. Parsing the filename is what makes cloud clips show WHEN they were
+// recorded instead of when they finished uploading.
 function recordingTime(rec) {
-  return rec.time || getRecordingTime(rec.filename, rec.lastModified);
+  const fromFile = parseHMSFromFilename(rec.filename);
+  if (fromFile) return fmt12(fromFile);
+  if (rec.time && /^\d{2}:\d{2}(:\d{2})?$/.test(rec.time)) {
+    return fmt12(rec.time.length === 5 ? `${rec.time}:00` : rec.time);
+  }
+  return getRecordingTime(rec.filename, rec.lastModified);
 }
 
 // Second meta line: recording type when the API reports one, otherwise the
@@ -238,7 +286,7 @@ function PlayButton({ onClick, className }) {
 }
 
 function ThumbButton({ rec, groupId, onPlay, label, className }) {
-  const duration = estimateDuration(rec.size);
+  const duration = durationLabel(rec);
   return (
     <button
       type="button"
@@ -265,7 +313,7 @@ function ThumbButton({ rec, groupId, onPlay, label, className }) {
 
 function RecordingRow({ rec, groupId, onPlay, onDownload }) {
   const cameraLabel = formatCameraSlug(rec.cameraName || '');
-  const duration = estimateDuration(rec.size);
+  const duration = durationLabel(rec);
 
   return (
     <li className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-surface-sunken sm:gap-4">
@@ -718,7 +766,8 @@ export default function Gallery({ onPlay, initialGroupId, initialCamera = 'all',
     const params = {
       page,
       limit: perPage,
-      window: 3,   // group the flood of seconds-long segments into 3-minute timeline windows
+      // No window grouping: every clip gets its own card (stitched clips are
+      // already 1–3 min each, not a flood of seconds-long segments).
     };
 
     if (dateFrom && dateTo && dateFrom === dateTo) {
@@ -734,19 +783,8 @@ export default function Gallery({ onPlay, initialGroupId, initialCamera = 'all',
         if (ctrl.signal.aborted) return;
         const { data: recs, pagination } = response;
 
-        // Local recordings come back as 3-minute windows (mode:'windows'). Map
-        // each window into a clip-like card the existing timeline/grid + player
-        // already render — playing a window plays its segments back-to-back.
-        let filtered = (recs || []).map((r) => (r && r.clips) ? {
-          key:         r.firstKey,
-          cameraName:  r.cameraName,
-          date:        r.date,
-          time:        r.windowStart,
-          filename:    `${r.windowStart} · ${r.clipCount} clip${r.clipCount === 1 ? '' : 's'}`,
-          size:        r.bytes,
-          isWindow:    true,
-          windowClips: r.clips,
-        } : r);
+        // Each recording is rendered as its own card (one clip = one card).
+        let filtered = recs || [];
 
         if (dateFrom && dateTo && dateFrom !== dateTo) {
           filtered = filtered.filter((r) => {

@@ -9,7 +9,7 @@ import { PageCard } from '@/core/layout/OperationsPage';
 import { useGroups } from '@/core/hooks/useQueries';
 import { cameraHealthService } from '@/core/services/cameraHealth';
 import { aiService } from '@/core/services/ai';
-import { getCameraRecordings, getDownloadUrl, getStreamUrl } from '@/core/services/recordings';
+import { getCameraRecordings, getDownloadUrl, getExportUrl, getStreamUrl } from '@/core/services/recordings';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/core/ui/sheet';
 import Gallery from '@/core/pages/Gallery';
 import { PlayerButton } from '@/core/pages/NvrPlayback';
@@ -32,10 +32,14 @@ const EVENT_PAGES_MAX = 10;          // pages fetched on our own to reach a past
 const GAP_NOTE_MS = 2000;            // a jump between clips longer than this is announced
 const DOWNLOAD_SPACING_MS = 700;     // browsers drop back-to-back downloads fired together
 const MAX_DAYS = 7;
+// 'mp4' = one file cut to the exact range on the server (prod's
+// /groups/:id/recordings/export, 2026-10-16); 'clips' = the stored clips as
+// they were recorded, downloaded one by one.
 const EXPORT_FORMATS = [
+  { id: 'mp4', label: 'One MP4, trimmed', hint: 'A single file cut to your exact range. Recommended.' },
   { id: 'clips', label: 'Whole clips (MP4)', hint: 'Each stored clip that overlaps the range, as recorded. Not trimmed.' },
 ];
-const exportLimitText = (max) => `Downloads are limited to ${fmtDuration(max)} at a time: every clip that overlaps the range downloads whole, so a longer range means many large files.`;
+const exportLimitText = (max) => `Exports are limited to ${fmtDuration(max)} at a time.`;
 
 const draftOf = (w) => ({ day: dayKey(w.start), from: timeValue(w.start), to: timeValue(w.end) });
 const readLast = () => { try { return JSON.parse(localStorage.getItem(LAST_KEY) || '{}') || {}; } catch { return {}; } };
@@ -50,6 +54,17 @@ const recordingsKey = (groupId, monitorId, day) => ['cloudPlayback', 'recordings
 
 // …/2026-10-20/14-03-22-123456.mp4, or a filename carrying date and time.
 const KEY_TIME = /(\d{4}-\d{2}-\d{2})[/T_ ](\d{2})[-:]?(\d{2})[-:]?(\d{2})/;
+// The end a stitched cloud clip carries in its name: "17-48-57_to_17-50-00_1m.mp4".
+const NAME_END = /_to_(\d{2})-(\d{2})-(\d{2})/;
+
+/** A stitched clip's exact end (epoch ms) from "_to_HH-MM-SS", else null. */
+function clipEndFromName(rec, start) {
+  const m = NAME_END.exec(rec?.filename || '');
+  if (!m || start == null) return null;
+  let end = atTime(rec?.date || dayKey(start), `${m[1]}:${m[2]}:${m[3]}`);
+  if (end < start) end += DAY; // the clip crossed midnight
+  return end;
+}
 
 /**
  * When a clip starts, in this browser's local time. `startedAt` is the
@@ -92,13 +107,16 @@ function buildClips(pages, monitorId, durations, nowMs) {
       const start = clipStart(rec);
       if (start == null) continue;
       seen.add(rec.key);
-      list.push({ key: rec.key, start, filename: rec.filename, size: rec.size });
+      list.push({ key: rec.key, start, filename: rec.filename, size: rec.size, named: clipEndFromName(rec, start) });
     }
   }
   list.sort((a, b) => a.start - b.start);
   return list.map((c, i) => {
     const next = list[i + 1];
-    const own = c.start + (durations[c.key] ?? SEGMENT_MS);
+    // Measured length once played, else the end the filename names, else a full segment.
+    const own = durations[c.key] != null ? c.start + durations[c.key]
+      : c.named != null ? c.named
+      : c.start + SEGMENT_MS;
     const end = Math.min(next ? Math.min(next.start, own) : own, Math.max(nowMs, c.start + 1000));
     return { ...c, end };
   });
@@ -233,7 +251,10 @@ export default function CloudPlayback() {
   const [exportRange, setExportRange] = useState(() => clipAround(win.start + 45_000));
   const [exportNotice, setExportNotice] = useState(null);
   const [exporting, setExporting] = useState(false);
-  const [galleryOpen, setGalleryOpen] = useState(false);
+  // ?view=gallery (prod's Timeline / Gallery switch) opens the library drawer.
+  const [galleryOpen, setGalleryOpen] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('view') === 'gallery'; } catch { return false; }
+  });
 
   useEffect(() => { winRef.current = win; }, [win]);
   useEffect(() => { spanRef.current = span; }, [span]);
@@ -752,8 +773,19 @@ export default function CloudPlayback() {
     document.getElementById('clip-export')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [changeExport]);
 
-  const runExport = async () => {
+  // One trimmed MP4, cut on the server from the cloud + local clips over the range.
+  const runTrimmedExport = () => {
+    const start = Math.round(exportRange.start);
+    const end = Math.round(Math.min(exportRange.end, Date.now()));
+    if (end - start < 1000) { setExportNotice({ tone: 'danger', text: "This range hasn't been recorded yet." }); return; }
+    const name = `${(camera.name || 'clip').replace(/[^\w.-]+/g, '_')}_${dayKey(start)}_${timeValue(start, true).replace(/:/g, '-')}_to_${timeValue(end, true).replace(/:/g, '-')}`;
+    triggerDownload(getExportUrl(groupId, camera.monitorId, start, end, name), `${name}.mp4`);
+    setExportNotice({ tone: 'info', text: `Building ${fmtClock(start)} → ${fmtClock(end)} from the recordings — the download starts in a few seconds.` });
+  };
+
+  const runExport = async (format) => {
     if (!camera || groupId == null || exporting) return;
+    if (format !== 'clips') { runTrimmedExport(); return; }
     const gid = groupId;
     const mon = camera.monitorId;
     const start = exportRange.start;
@@ -1284,7 +1316,7 @@ export default function CloudPlayback() {
           onDismissNotice={() => setExportNotice(null)}
           formats={EXPORT_FORMATS}
           limitText={exportLimitText}
-          actionLabel={exporting ? 'Downloading…' : 'Download Clips'}
+          actionLabel={exporting ? 'Downloading…' : 'Export'}
         />
       </div>
 

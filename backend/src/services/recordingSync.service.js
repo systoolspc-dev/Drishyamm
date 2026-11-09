@@ -51,7 +51,7 @@ const STITCH_BELOW_SEC    = config.streamService.stitchBelowSeconds ?? 120;
 // Hard ceiling for a stitched batch (seconds). Roughly matches 1.5× the
 // configured segment duration so we don't accidentally produce huge files
 // when many fragments queue up after a long outage.
-const STITCH_MAX_BATCH_SEC = 15 * 60;
+const STITCH_MAX_BATCH_SEC = parseInt(process.env.RECORDING_STITCH_MAX_BATCH_SEC || String(15 * 60), 10);
 // Max gap between fragment end and next fragment start, in seconds, that
 // still counts as "consecutive" for stitching purposes.
 const STITCH_MAX_GAP_SEC   = 5;
@@ -117,6 +117,30 @@ function rememberUploaded(key) {
 // survive to retry next cycle — reading a multi-GB clip whole would OOM the heap.
 // (The primary path streams from disk, so this only bounds the fallback.)
 const MAX_BUFFER_FALLBACK_BYTES = parseInt(process.env.RECORDING_MAX_BUFFER_MB || '256', 10) * 1024 * 1024;
+
+// RECORDING_KEEP_LOCAL=1 keeps a local copy of every clip that reaches S3.
+// The copy is MOVED into an `archived/` subdir of its date dir rather than left
+// in place: findSegments() only picks up *.mp4 sitting directly inside a date
+// dir and never recurses, so an archived clip is invisible to the next sync
+// pass. Leaving it in place would re-probe (ffprobe) and re-stitch every kept
+// file on every 5-minute cycle, unbounded, forever.
+const KEEP_LOCAL  = process.env.RECORDING_KEEP_LOCAL === '1';
+const ARCHIVE_DIR = 'archived';
+
+/** Retire a clip that is safely in S3: archive it when KEEP_LOCAL, else delete. */
+async function retireLocalClip(filePath) {
+  if (!KEEP_LOCAL) {
+    await fs.promises.unlink(filePath).catch(() => {});
+    return;
+  }
+  const dest = path.join(path.dirname(filePath), ARCHIVE_DIR, path.basename(filePath));
+  try {
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    await fs.promises.rename(filePath, dest);   // same filesystem: atomic, instant
+  } catch (err) {
+    logger.warn('recordingSync: could not archive local clip', { filePath, error: err.message });
+  }
+}
 // STALE_TEMP_MS is derived from CONCAT_TIMEOUT_MS, which is declared further down
 // (near the ffmpeg helpers) — see below, defined after it to avoid a TDZ error.
 
@@ -349,12 +373,12 @@ async function uploadClip({ filePath, s3Filename, date, camera, group, user }) {
   const s3Key = `recordings/${user.id}/${slug(group.name)}/${slug(camera.name)}/${date}/${s3Filename}`;
 
   if (_uploaded.has(s3Key)) {
-    await fs.promises.unlink(filePath).catch(() => {});
+    await retireLocalClip(filePath);
     return s3Key;
   }
   if (await s3Service.exists(s3Key)) {
     rememberUploaded(s3Key);
-    await fs.promises.unlink(filePath).catch(() => {});
+    await retireLocalClip(filePath);
     return s3Key;
   }
 
@@ -384,9 +408,7 @@ async function uploadClip({ filePath, s3Filename, date, camera, group, user }) {
   rememberUploaded(s3Key);
   logger.info('recordingSync: uploaded', { s3Key, bytes: stat.size });
 
-  await fs.promises.unlink(filePath).catch((err) => {
-    logger.warn('recordingSync: could not delete local clip', { filePath, error: err.message });
-  });
+  await retireLocalClip(filePath);
   return s3Key;
 }
 
@@ -440,9 +462,45 @@ function planBatches(segmentsWithMeta) {
  * Returns { filePath, durationSec, start, end, sources } or null on failure.
  * `sources` is the list of original files that should be deleted on success.
  */
+// Stream Service and backfill write fragmented MP4 (moof boxes, no index). A
+// browser can't seek in that without downloading everything before the point,
+// and the length isn't known up front, so a 10-minute clip opened slowly and
+// showed a wrong duration. Every clip is uploaded as a normal MP4 with its moov
+// at the front instead. Stream copy: no quality change, little CPU.
+async function isFragmented(filePath) {
+  let fh;
+  try {
+    fh = await fs.promises.open(filePath, 'r');
+    const buf = Buffer.alloc(256 * 1024);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    const head = buf.subarray(0, bytesRead);
+    return head.includes('moof') || head.includes('mvex');
+  } catch {
+    return false;
+  } finally {
+    await fh?.close().catch(() => {});
+  }
+}
+
+/** Rewrite a fragmented segment in place as a faststart MP4 (keeps its mtime). */
+async function makeFaststart(filePath, cameraDir) {
+  if (!(await isFragmented(filePath))) return true;
+  const st = await fs.promises.stat(filePath);
+  const tmp = path.join(cameraDir, `.stitch-fs-${Date.now()}-${process.pid}.mp4`);
+  const ok = await ffmpegConcat([filePath], tmp);
+  if (!ok) { await fs.promises.unlink(tmp).catch(() => {}); return false; }
+  await fs.promises.utimes(tmp, st.atime, st.mtime).catch(() => {});
+  await fs.promises.rename(tmp, filePath);
+  return true;
+}
+
 async function materializeBatch(batch, cameraDir) {
   if (batch.length === 1) {
     const s = batch[0];
+    // Unreadable as a normal MP4: upload it as recorded rather than lose it.
+    if (!(await makeFaststart(s.filePath, cameraDir))) {
+      logger.warn('recordingSync: could not make segment faststart, uploading as recorded', { file: s.filePath });
+    }
     return {
       filePath:    s.filePath,
       durationSec: s.durationSec,
@@ -622,6 +680,9 @@ async function probeHlsMuxer(monitorId) {
 function buildCamConfig(camera) {
   const group = camera.group;
   return {
+    // Owner: StreamServiceEngine.addCamera() uses this to decide whether this
+    // account's cameras record continuously (RECORD_USER_IDS).
+    userId:   camera.userId,
     host:     group?.host     ?? camera.host,
     port:     group?.port     ?? camera.port,
     path:     camera.path,
@@ -965,4 +1026,4 @@ function stop() {
 
 module.exports = { start, stop, runSync, runWatchdog };
 // Exposed for unit tests only.
-module.exports._internals = { rememberUploaded, sweepStaleTempFiles, _uploaded, UPLOADED_CACHE_MAX, STALE_TEMP_MS };
+module.exports._internals = { rememberUploaded, sweepStaleTempFiles, _uploaded, UPLOADED_CACHE_MAX, STALE_TEMP_MS, isFragmented, makeFaststart };

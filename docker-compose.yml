@@ -200,13 +200,19 @@ services:
       - qdrant-data:/qdrant/storage
 
   minio:
-    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    # Official minio/minio images are no longer pulled from Docker Hub / quay.io
+    # (pull is denied), so use Bitnami's archived build of the same release.
+    # Run the minio binary directly (not Bitnami's setup scripts) as root, so it
+    # reads /data exactly as the official image did — existing volumes keep working.
+    image: bitnamilegacy/minio:2024.10.13
     container_name: drishyam-minio
     restart: unless-stopped
+    entrypoint: ["/opt/bitnami/minio/bin/minio"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    user: "0:0"
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
-    command: server /data --console-address ":9001"
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -307,6 +313,7 @@ services:
       PERSON_TRACKER_URL: http://person-tracker:8003
       PERSON_TRACKER_SERVICE_TOKEN: ${SERVICE_TOKEN}
       STREAM_SERVICE_API_URL: http://stream-service:9997
+      MEDIAMTX_API_URL: http://stream-service:9997   # streamSupervisor health polls (env.js defaults to localhost)
       STREAM_SERVICE_INTERNAL_HLS_URL: http://stream-service:8888
       # Browser-facing media URLs — must be reachable from the operator's PC.
       STREAM_SERVICE_HLS_URL: ${PUBLIC_HLS_URL:-http://localhost:8898}

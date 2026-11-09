@@ -323,7 +323,7 @@ export default function Register() {
               Everything you need to monitor your sites
             </h2>
             <p className="text-white/85 text-heading">
-              Smart-Cam gives construction teams complete visibility — from anywhere in the world.
+              Drishyam gives construction teams complete visibility — from anywhere in the world.
             </p>
           </div>
 

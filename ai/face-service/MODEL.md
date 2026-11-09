@@ -56,7 +56,7 @@ Infra roles:
 | Postgres + pgvector | `pgvector/pgvector:pg16` | `tenants`, `persons`, `face_enrollments`, `face_learning_samples`, `cameras`, `detection_events` (TimescaleDB hypertable when the extension exists), `track_links`, `audit_log`, `embeddings`/`journeys`/`journey_stops` (journey mirror with `face_vec`/`body_vec`). Migrations in `alembic/versions/0001..0006` |
 | Qdrant | `qdrant/qdrant:v1.12.4` | `vms_enrolled` (gallery, source of truth) and `vms_appearance` (append-only forensic log). 512-d, Cosine, payload index on `tenant_id`/`person_id`/`camera_id`/`role` (`infra/qdrant.py`) |
 | Redis | `redis:7-alpine` | Streams `vms.detections` (candidates, maxlen ~20,000), `vms.alerts`, `vms.detections.dlq`; pub/sub `vms.cam.state:{camera_id}` (overlay), `vms.verdict:{camera_id}` (latch feedback), `vms.gallery.changed`; keys `vms:shard:owners`, `vms:overlay:viewers`, `vms:gallery:version:{tenant}` |
-| MinIO | `minio/minio` | `vms-snapshots` (face+body crops per candidate), `vms-enrollments`, `vms-person-tracker` (journey outputs) |
+| MinIO | `bitnamilegacy/minio` (MinIO 2024-10-13) | `vms-snapshots` (face+body crops per candidate), `vms-enrollments`, `vms-person-tracker` (journey outputs) |
 | Kafka | KRaft single node | `journey.events` spine (no-op producer when `KAFKA_BOOTSTRAP_SERVERS` is empty) |
 
 The standalone `code/vms_face/docker-compose.gpu.yml` + `code/vms_face/Dockerfile` is an older,

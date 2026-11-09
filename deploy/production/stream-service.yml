@@ -1,0 +1,70 @@
+###############################################################################
+# Drishyam VMS — MediaMTX Configuration v2.0 (PRODUCTION — 103.109.7.36)
+#   Only diff from the dev config: webrtcAdditionalHosts advertises the public
+#   IP so remote browsers get a reachable ICE host candidate (Docker/NAT).
+###############################################################################
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+
+metrics: yes
+metricsAddress: :9998
+
+authMethod: internal
+authInternalUsers:
+  - user: drishyam
+    pass: drishyam123
+    ips: []
+    permissions:
+      - action: api
+  - user: any
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: metrics
+
+rtsp: yes
+rtspAddress: :8554
+rtspEncryption: "optional"
+rtspTransports: [tcp]
+rtspsAddress: :8555
+rtspServerCert: /rtsps-cert.pem
+rtspServerKey: /rtsps-key.pem
+udpReadBufferSize: 8192
+
+rtmp: no
+srt: no
+
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes
+hlsVariant: fmp4
+hlsSegmentDuration: 2s
+hlsPartDuration: 1s
+hlsSegmentMaxSize: 100M
+hlsAllowOrigins: ["*"]
+
+# ── WebRTC egress (sub-500ms — single-camera live view) ───────────────────────
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+# PROD: advertise the server's public IP as an ICE host candidate. Without this
+# MediaMTX only offers the container's internal 172.x address, which a remote
+# browser can never reach → WHEP negotiates then freezes on a black frame.
+webrtcAdditionalHosts: ["103.109.7.36"]
+
+pathDefaults:
+  record: no
+  recordPath: /recordings/%path/%Y-%m-%d/%H-%M-%S-%f
+  recordFormat: fmp4
+  recordSegmentDuration: 10m
+  recordDeleteAfter: 72h
+  sourceOnDemandStartTimeout: 30s
+  sourceOnDemandCloseAfter: 20s
+
+paths:
+  all_others: {}

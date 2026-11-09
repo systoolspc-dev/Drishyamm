@@ -8,7 +8,7 @@ migrations when the services start.
 | MySQL 8.4 | `mysql:8.4` | `drishyamvms` | backend | `backend/migrations/*.js` (Sequelize; run on every backend start) + `backend/seeders/` |
 | PostgreSQL 16 + pgvector | `pgvector/pgvector:pg16` | `vms_face` | face service | `ai/face-service/vms_face/alembic/versions/` (run by `smart-cam-ai` on start: `alembic upgrade head`) |
 | Qdrant 1.12 | `qdrant/qdrant:v1.12.4` | collections `vms_enrolled` (galleries), `vms_appearance` (sightings), `faces` (legacy) | face service | created on first use |
-| MinIO | `minio/minio` | buckets `vms-snapshots`, `vms-enrollments`, `vms-person-tracker` (journey MP4/PDF) | face service | created on first use |
+| MinIO | `bitnamilegacy/minio` (MinIO 2024-10-13) | buckets `vms-snapshots`, `vms-enrollments`, `vms-person-tracker` (journey MP4/PDF) | face service | created on first use |
 | Redis 7 | `redis:7-alpine` | — | everyone | ephemeral state, no schema |
 
 ## What's in this folder

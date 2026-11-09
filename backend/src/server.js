@@ -16,6 +16,7 @@ const streamBus        = require('./services/streamBus.service');
 const aiLifecycle      = require('./services/aiLifecycle.service');
 const aiEventRetention = require('./services/aiEventRetention.service');
 const s3Retention      = require('./services/s3Retention.service');
+const recordingBackfill = require('./services/recordingBackfill.service');
 const transcoder       = require('./services/transcoder.service');
 const streamingService = require('./services/drishyamStreaming.service');
 const { bus, EVENTS }  = require('./events/bus');
@@ -37,17 +38,18 @@ async function startServer() {
     await sequelize.authenticate();
     logger.info('Database connection established successfully.');
 
-    // Sync models — only create tables that don't exist (no alter, avoids MySQL 64-key limit)
-    if (config.env === 'development') {
-      await sequelize.sync();
-      logger.info('Database models synchronized.');
-    }
+    // Schema is managed by migrations (sequelize-cli db:migrate in the start
+    // command). sequelize.sync() is DISABLED: with cyclic-FK models it issues
+    // ALTER ... UNIQUE on every boot, adding a duplicate index each time until
+    // MySQL's 64-key limit crash-loops startup. (disabled 2026-10-12)
 
     // Create the HTTP server explicitly so socket.io can attach to it.
     const server = http.createServer(app);
 
     // Attach socket.io BEFORE listen so the upgrade handler is registered.
     wsService.init(server);
+    // Live relay video socket (/api/stream/live): fMP4 over WebSocket, see liveRelay.service.js.
+    require("./services/liveRelay.service").attach(server);
 
     server.listen(PORT, async () => {
       logger.info(`Server running on port ${PORT} in ${config.env} mode`);
@@ -116,6 +118,10 @@ async function startServer() {
       // DELETE=1 — review the "would delete" logs before enabling deletion.
       s3Retention.start();
 
+      // Fill cloud-recording gaps (site link outages) from the NVR's own HDD
+      // once the camera is back. BACKFILL_ENABLED=0 turns it off.
+      recordingBackfill.start();
+
       // When a camera is deleted (any route), drop its in-memory supervisor +
       // quality state so the maps don't leak and a recycled monitorId can't
       // inherit a stale state machine. The Stream Service path teardown is handled by
@@ -148,6 +154,7 @@ async function startServer() {
       server.close(async () => {
         logger.info('HTTP server closed.');
         recordingSync.stop();
+        recordingBackfill.stop();
         aiLifecycle.stop();
         streamReconcile.stop();
         await streamSupervisor.stop().catch(() => {});

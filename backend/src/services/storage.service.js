@@ -30,11 +30,22 @@ const path      = require('node:path');
 
 const config  = require('../config/env');
 const logger  = require('../config/logger');
+const s3Service = require('./s3.service');
 
 const STORAGE_CACHE_MS = parseInt(process.env.STORAGE_CACHE_MS || '60000', 10);
 const RECORDINGS_DIR   = config.streamService.recordingsDir || '/recordings';
 
+// Cloud (S3) tier shown in the UI. The NetForChoice bucket is the "10 PB" tier;
+// we treat it as the denominator for the per-account usage bar. Decimal PB
+// (1e15) to match the "10 PB" label and the dashboard's fmtBytes().
+const CLOUD_TIER_BYTES = parseInt(process.env.CLOUD_TIER_BYTES || '10000000000000000', 10); // 10 PB
+const CLOUD_TIER_LABEL = process.env.CLOUD_TIER_LABEL || '10 PB';
+// Listing a prefix is a network round-trip per 1000 objects, so cache the
+// per-account total well above the dashboard's 60 s poll.
+const CLOUD_CACHE_MS   = parseInt(process.env.CLOUD_CACHE_MS || '180000', 10); // 3 min
+
 let _cache = { at: 0, value: null };
+const _cloudCache = new Map(); // userId -> { at, value }
 
 // Run a shell command and return stdout (trimmed). Rejects on non-zero exit.
 function run(cmd, args, { timeoutMs = 30_000 } = {}) {
@@ -123,4 +134,41 @@ async function snapshot() {
   return value;
 }
 
-module.exports = { snapshot };
+/**
+ * Per-account cloud (S3) usage — the total bytes this user's recordings
+ * consume in the bucket, under the `recordings/<userId>/` prefix. Scoped to a
+ * single account so each user only ever sees their own footprint, measured
+ * against the CLOUD_TIER_BYTES ("10 PB") denominator.
+ *
+ * Cached per-user for CLOUD_CACHE_MS. On any S3 error we return a skipped
+ * shape (never throw) so the dashboard still renders the disk card.
+ */
+async function cloudUsage(userId) {
+  if (!userId) return { enabled: false, skipped: true, reason: 'no user' };
+
+  const hit = _cloudCache.get(userId);
+  if (hit && Date.now() - hit.at < CLOUD_CACHE_MS) return hit.value;
+
+  let value;
+  try {
+    const objects = await s3Service.listObjects(`recordings/${userId}/`);
+    const usedBytes = objects.reduce((sum, o) => sum + (o.Size || 0), 0);
+    value = {
+      enabled:    true,
+      usedBytes,
+      objects:    objects.length,
+      tierBytes:  CLOUD_TIER_BYTES,
+      tierLabel:  CLOUD_TIER_LABEL,
+      usedRatio:  CLOUD_TIER_BYTES > 0 ? usedBytes / CLOUD_TIER_BYTES : 0,
+      capturedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    logger.warn('storage: cloud usage lookup failed', { userId, error: err.message });
+    value = { enabled: false, skipped: true, reason: err.message, tierBytes: CLOUD_TIER_BYTES, tierLabel: CLOUD_TIER_LABEL };
+  }
+
+  _cloudCache.set(userId, { at: Date.now(), value });
+  return value;
+}
+
+module.exports = { snapshot, cloudUsage };
