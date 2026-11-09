@@ -148,7 +148,10 @@ async function open(c) {
   const wsBase = /^https?:/.test(API_BASE)
     ? API_BASE.replace(/^http/, 'ws')
     : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${API_BASE}`;
-  const ws = new WebSocket(`${wsBase}/api/stream/live?ticket=${encodeURIComponent(ticket)}`);
+  // `cam` is for routing only (the backend reads just `ticket`): with several
+  // backend replicas, nginx hashes on it so the socket reaches the replica that
+  // issued the ticket and runs this camera's relay (deploy/nginx/nginx.conf).
+  const ws = new WebSocket(`${wsBase}/api/stream/live?ticket=${encodeURIComponent(ticket)}&cam=${encodeURIComponent(c.monitorId)}`);
   ws.binaryType = 'arraybuffer';
   c.ws = ws;
   let expectInit = false;
