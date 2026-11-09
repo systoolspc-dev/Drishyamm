@@ -335,6 +335,11 @@ services:
       # WebRTC + CPU H.264 transcode: measured 2026-11-09, 55-78 % of Monitor
       # Wall tiles never played. Set RELAY_AUDIO=1 in .env to try audio.
       RELAY_AUDIO: "${RELAY_AUDIO:-0}"
+      # Dev only: don't rate-limit requests from private / Docker addresses. Under
+      # Docker every browser tab on this machine shares one client IP (the bridge
+      # gateway) and one 5000/15 min bucket, so a Monitor Wall plus a couple of
+      # tabs ran it dry and the whole UI went 429. NOT set in production compose.
+      RATE_LIMIT_SKIP_PRIVATE: "1"
       # Quarantine a flapping camera after 4 flaps in 2 min, for 10 min.
       SUPERVISOR_FLAP_LIMIT: "4"
       SUPERVISOR_FLAP_WINDOW_MS: "120000"
