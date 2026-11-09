@@ -12,6 +12,17 @@
 logLevel: info
 logDestinations: [stdout]
 
+# ── Ride out network pauses instead of tearing sessions down ──────────────────
+# Remote NVR links pause: measured 2026-10-20, a single 1080p main pulled
+# straight from the NVR (nothing else running) played 28 s, froze 12 s, then
+# the backlog arrived in one burst (TCP retransmit back-off on a lossy path).
+# At the 10 s default MediaMTX closed the NVR session in that pause, ffmpeg died
+# with "input ended" (50 of ~90 transcoder crashes that morning), and the
+# reconnects of every camera at once tripped the site's burst block on 554.
+# 30 s lets the flow resume; writeQueueSize absorbs the catch-up burst.
+readTimeout: 30s
+writeQueueSize: 2048
+
 # ── REST API (Express backend manages camera paths via this) ──────────────────
 api: yes
 apiAddress: :9997
