@@ -36,6 +36,18 @@ const transcoder = require('./transcoder.service');
 const IDLE_MS        = parseInt(process.env.RELAY_IDLE_MS || '30000', 10);
 const MAX_GOP_FRAMES = parseInt(process.env.RELAY_MAX_GOP_FRAMES || '800', 10);
 const SLOW_BYTES     = parseInt(process.env.RELAY_SLOW_BYTES || String(2 * 1024 * 1024), 10);
+// Stall watchdog. An NVR can keep the RTSP/TCP session open while it stops
+// sending video (keep-alives / RTCP / audio still flow), so ffmpeg's socket
+// timeout never fires and the relay sits frozen for good: viewers get the
+// cached GOP — one still picture — then nothing. Measured 2026-11-09 on an
+// 18-tile wall (office12): 3 of 18 relays delivered 50 frames (the GOP cache)
+// and then zero for 60 s, and stayed that way until the page was reloaded.
+// A running relay with no video fragment for RELAY_STALL_MS is restarted
+// through the normal path (same per-NVR pacing and backoff). Sub-streams run
+// at 6-25 fps, so 10 s of silence is never a quiet camera.
+const STALL_MS       = parseInt(process.env.RELAY_STALL_MS || '10000', 10);
+// No init segment at all this long after ffmpeg started: connect/probe hung.
+const NO_INIT_MS     = parseInt(process.env.RELAY_NO_INIT_MS || '20000', 10);
 const TICKET_MS      = 30_000;
 
 const _relays = new Map();   // path → relay
@@ -374,7 +386,9 @@ async function spawnRelay(relay) {
       : ran > 30_000 ? 1000
         : refused ? Math.min(60_000, 1000 * 2 ** Math.min(relay.restarts, 6))
           : Math.min(15_000, 1000 * 2 ** Math.min(relay.restarts, 4));
-    const msg = err.trim().split('\n').slice(-2).join(' | ').replace(/rtsp:\/\/[^@\s/]*@/g, 'rtsp://***@');
+    const msg = relay.killReason
+      || err.trim().split('\n').slice(-2).join(' | ').replace(/rtsp:\/\/[^@\s/]*@/g, 'rtsp://***@');
+    relay.killReason = null;
     // A one-shot replay (NVR playback) is over when its source ends: the range
     // is done, or the NVR had nothing. Never restart it from the beginning.
     if (relay.once) {
@@ -530,6 +544,25 @@ setInterval(() => {
   for (const [k, t] of _tickets) if (t.expires < now) _tickets.delete(k);
 }, 60_000).unref?.();
 
+/** Kill relays whose source went silent; the exit handler restarts them. */
+function sweepStalled(now = Date.now()) {
+  for (const relay of _relays.values()) {
+    const proc = relay.proc;
+    if (!proc || relay.stopped || relay.once || relay.killReason) continue;
+    let reason = null;
+    if (!relay.init) {
+      if (now - relay.startedAt > NO_INIT_MS) reason = `no video ${Math.round((now - relay.startedAt) / 1000)} s after start (watchdog)`;
+    } else {
+      const since = Math.max(relay.lastFrameAt || 0, relay.startedAt);
+      if (now - since > STALL_MS) reason = `no video for ${Math.round((now - since) / 1000)} s while connected (watchdog)`;
+    }
+    if (!reason) continue;
+    relay.killReason = reason;
+    try { proc.kill('SIGKILL'); } catch (_) { relay.killReason = null; }
+  }
+}
+setInterval(() => sweepStalled(), 2000).unref?.();
+
 function addViewer(ws, { path, monitorId, variant }) {
   const relay = getRelay(path, { monitorId, variant, wanted: true });
   relay.viewers.add(ws);
@@ -572,4 +605,4 @@ function stats() {
   }));
 }
 
-module.exports = { attach, issueTicket, pin, isRunning, stopRelay, stats, viewerCount, releaseIfIdle, codecOf, sessionsOnHost, hasSource, _internals: { codecFromInit, isKeyframe, findBox } };
+module.exports = { attach, issueTicket, pin, isRunning, stopRelay, stats, viewerCount, releaseIfIdle, codecOf, sessionsOnHost, hasSource, _internals: { codecFromInit, isKeyframe, findBox, sweepStalled, relays: _relays } };
