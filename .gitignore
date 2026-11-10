@@ -102,7 +102,7 @@ tmp/
 nul
 
 # ── local agent / tooling state ─────────────────────────────────────────────
-.claude/settings.local.json
+.claude/
 .playwright-mcp/
 
 # ── OS / editor ─────────────────────────────────────────────────────────────
