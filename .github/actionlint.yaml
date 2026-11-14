@@ -1,0 +1,5 @@
+# Custom labels of our self-hosted runners (docs/DEPLOYMENT.md).
+self-hosted-runner:
+  labels:
+    - testing
+    - production

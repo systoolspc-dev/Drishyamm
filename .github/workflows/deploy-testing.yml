@@ -1,0 +1,70 @@
+# Auto-deploy `main` to the TESTING server (self-hosted runner on that machine).
+#
+#   push to main      → deploy that commit
+#   Run workflow      → deploy any commit on main (`sha` input): redeploy or roll back
+#
+# Only `push` and `workflow_dispatch` trigger it. Pull requests (including from forks
+# of this public repo) can never run code on the self-hosted runner.
+# Setup: docs/DEPLOYMENT.md §3. Repo variable DEPLOY_DIR = the server's checkout path.
+name: Deploy testing
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit on main to deploy (blank = latest main). Use an older SHA to roll back."
+        required: false
+        default: ""
+
+# Never two deploys at once; a newer push waits for the running deploy.
+concurrency:
+  group: deploy-testing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to testing server
+    runs-on: [self-hosted, testing]
+    environment: testing
+    timeout-minutes: 45
+    steps:
+      - name: Deploy
+        env:
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+          INPUT_SHA: ${{ inputs.sha }}
+          PUSH_SHA: ${{ github.sha }}
+          DEPLOY_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          cd "${DEPLOY_DIR:?Set the repo variable DEPLOY_DIR to the server checkout path}"
+          git fetch --prune --quiet origin
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            SHA="$(git rev-parse --verify "${INPUT_SHA:-origin/main}^{commit}")"
+          else
+            SHA="$PUSH_SHA"
+          fi
+          echo "Deploying $SHA"
+          # Run the deploy script from the commit being deployed (older commits
+          # without one fall back to main's), not the copy currently on disk.
+          if git cat-file -e "$SHA:scripts/deploy.sh" 2>/dev/null; then SRC="$SHA"; else SRC=origin/main; fi
+          git show "$SRC:scripts/deploy.sh" > "$RUNNER_TEMP/deploy.sh"
+          bash "$RUNNER_TEMP/deploy.sh" "$SHA"
+
+      - name: Summary
+        if: always()
+        env:
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+        run: |
+          {
+            echo "### Testing deploy"
+            if [ -f "$DEPLOY_DIR/.deploy/last-deployed" ]; then
+              echo '```'; cat "$DEPLOY_DIR/.deploy/last-deployed"; echo '```'
+            fi
+            echo "Last deploys:"
+            echo '```'; tail -n 5 "$DEPLOY_DIR/.deploy/history.log" 2>/dev/null || echo "(none yet)"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

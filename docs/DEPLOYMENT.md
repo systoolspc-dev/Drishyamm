@@ -116,6 +116,28 @@ The runner is a systemd service under `systools-pc` (non-root, docker group) and
 starts on boot. The workflow `cd`s into the server checkout and deploys there,
 so the live `.env` files and data volumes stay as they are.
 
+| Piece | Where / what |
+|---|---|
+| Runner | `~/actions-runner`, name `drishyam-test`, labels `self-hosted, Linux, X64, testing` |
+| Runner service | `actions.runner.systoolspc-dev-Drishyamm.drishyam-test.service` (installed with `sudo ./svc.sh install systools-pc`; on SELinux-enforcing Fedora also `sudo chcon -t bin_t ~/actions-runner/runsvc.sh`) |
+| Repo variable | `DEPLOY_DIR` = server checkout path (Settings → Secrets and variables → Actions → Variables) |
+| GitHub environment | `testing` (created by the first run; shows deployment history) |
+| Deploy state | `.deploy/last-deployed`, `.deploy/history.log`, lock `.deploy/lock` (gitignored) |
+| DB dumps | `~/drishyam-backups/<UTC time>-<sha>/` (`mysql-drishyamvms.sql.gz`, `postgres-vms_face.dump`), newest 20 kept |
+
+The deploy job runs `scripts/deploy.sh` **from the commit being deployed**
+(`git show <sha>:scripts/deploy.sh`), so fixes to the script apply on the same
+deploy. Only `push` to `main` and `workflow_dispatch` start it, never pull
+requests, so code from forks can't reach the self-hosted runner.
+
+### CI on pull requests
+
+`ci.yml` runs on GitHub-hosted runners only. It covers backend jest, frontend
+`npm test` + `npm run build`, the face-service unittest suite, and the head-count /
+activity-monitor pytest suites (CPU). Known-failing tests are excluded **by name**
+and listed at the top of `ci.yml`; fix them and remove the exclusion. Frontend lint
+is not enforced yet (94 eslint errors).
+
 ---
 
 ## 4. Rolling back
