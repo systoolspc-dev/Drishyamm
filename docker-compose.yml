@@ -89,6 +89,9 @@ x-ai-env: &ai-env
   PIPELINE_PERSON_THRESHOLD: "0.35"
   PIPELINE_PERSON_DET_SIZE: "640"
   PIPELINE_PERSON_DETECT_EVERY_N_FRAMES: "2"
+  # Investigation index (I-1) phase 0: count tracks per camera, nothing else.
+  # See docs/investigation/PHASE0_MEASUREMENT.md.
+  INVESTIGATE_MEASURE_ENABLED: ${INVESTIGATE_MEASURE_ENABLED:-false}
   RESTART_ONLINE_STREAMS_ON_STARTUP: "true"
   LEGACY_SINGLE_ACTIVE_CAMERA: "false"
   # First read after an on-demand RTSP open waits for a keyframe; long-GOP

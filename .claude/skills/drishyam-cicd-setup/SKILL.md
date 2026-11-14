@@ -20,7 +20,7 @@ laptops, because people patched servers during demos. Everything is now in
 | TESTING (this machine) | `main` | **public via Funnel, no site password** (changed from tailnet-only on 2026-11-13 at the user's request, "option B"), `<testing URL>` | auto on every push/merge to `main` | **us (this project)** |
 | PRODUCTION (other machine) | `production` | Cloudflare Tunnel + gpu-bridge (exists) | auto on push to `production`, runner label `production` | maintainer, separately |
 
-Team flow: `feature/<name>-<task>` → PR into `main` → maintainer merges → testing
+Team flow: `<name>/<module>-<task>` (investigation: `<name>/investigation-i<N>-<feature>`; see docs/GIT_WORKFLOW.md#branch-naming) → PR into `main` → maintainer merges → testing
 auto-deploys. Release: PR `main` → `production`.
 Golden rule: code reaches a server only through GitHub + the pipeline.
 

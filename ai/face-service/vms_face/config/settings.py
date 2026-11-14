@@ -494,6 +494,16 @@ class Settings(BaseSettings):
     pipeline_person_threshold: float = 0.35
     pipeline_person_det_size: int = 640
     pipeline_person_detect_every_n_frames: int = 2
+    # --- Investigation index (I-1), phase 0 measurement ---
+    # Counts finished face tracks and (when person detection is on) person
+    # tracks per camera, so we know tracks/camera/day before building the
+    # index. Counting only: no crops, no embeddings, no DB writes. Off by
+    # default. See docs/investigation/PHASE0_MEASUREMENT.md.
+    investigate_measure_enabled: bool = False
+    investigate_measure_log_interval_s: int = 900     # one summary log line per camera
+    investigate_min_track_seconds: float = 1.0        # shorter tracks count as junk
+    investigate_min_track_hits: int = 3               # fewer matched frames count as junk
+    investigate_person_track_max_gap_s: float = 1.0   # person track ends after this long unseen
     # --- Motion gate (roadmap task E.3) — skip SCRFD on static scenes ---
     # A cheap CPU frame-difference check runs before the detector. When the
     # scene is static AND no tracks are alive, the detect call is skipped

@@ -4,7 +4,8 @@
 
 - **Repo:** `systoolspc-dev/Drishyamm` (this repo, the full end-to-end system). All investigation code lives here.
 - **Full product plan** (the long version, with impact, pricing and risks): `RG1208/Drishyam` → [`competitor-analysis/INVESTIGATION-TOOLKIT.md`](https://github.com/RG1208/Drishyam/blob/main/competitor-analysis/INVESTIGATION-TOOLKIT.md). That plan was written before this repo was mapped, so **where its file paths differ from this doc, this doc wins.**
-- **Status:** planning complete, no code yet (2026-11-10).
+- **Status:** Phase 0 measurement in progress on `rachit/investigation-i1-search-index` (2026-11-14). Runbook: [`PHASE0_MEASUREMENT.md`](PHASE0_MEASUREMENT.md).
+- **Product decisions (2026-11-14):** (1) built **inside Drishyam** and integrated with it directly; a standalone module is a later, separate project. (2) The toolkit must be **forensic-grade**: rules 12–18 in §6 are mandatory.
 
 ---
 
@@ -46,7 +47,7 @@ Build strictly in this order: each step reuses the one before it.
 | | **I-10** | Vehicle journey | Plate + type + colour + vehicle ReID → route across cameras | M |
 | **4 · Later** | — | Associations, video synopsis, audio search, "watch for this" live rule | — | M–L |
 
-Branches and pull requests: **one per feature** (`feature/investigation-index`, `feature/investigation-search`, `feature/evidence-export`, …), all to `main`, reviewed and merged by the manager. Never commit straight to `main`.
+Branches and pull requests: **one per feature**, named `<yourname>/investigation-i<N>-<feature>` (`rachit/investigation-i1-search-index`, `rachit/investigation-i3-click-to-track`, `rachit/investigation-i4-cases`, …), all to `main`, reviewed and merged by the manager. Never commit straight to `main`. Full list and rules: [`docs/GIT_WORKFLOW.md` → Branch naming](../GIT_WORKFLOW.md#branch-naming).
 
 ## 4. The existing system you are building on
 
@@ -173,17 +174,27 @@ evidence_exports(id, tenant_id, case_id null, user_id, reason, files json /* pat
 8. **Sensitive attributes** (gender, age) stay **off by default** and per-tenant opt-in. No emotion or "suspicious-looking" scoring.
 9. **Retention:** index data lives exactly as long as the video it points at, except items pinned to a case (legal hold).
 10. **Licences:** check the commercial licence of every model weight and dataset before shipping. Large weights go through Git LFS (see `.gitattributes`).
-11. **Git:** feature branch → PR to `main` → manager merges. Small PRs, one feature each. Pull `main` often.
+11. **Git:** one branch per feature (`<yourname>/investigation-i<N>-<feature>`) → PR to `main` → manager merges. Small PRs, one feature each. Pull `main` often.
+
+**Forensic-grade rules (added 2026-11-14):**
+
+12. **Hash at the source:** recording segments and imported files get a SHA-256 when written or uploaded, stored with the segment. Evidence export re-checks those hashes, so integrity is provable from recording onward, not only from export.
+13. **Time integrity:** record each camera's / NVR's clock offset and NTP status with its footage. Evidence reports state the offset for every clip.
+14. **Tamper-evident audit:** investigation and evidence audit entries are hash-chained (each entry stores the hash of the previous one). A verify routine detects a missing or edited entry.
+15. **Lead, not identification:** every AI match shows its confidence and is labelled as an investigative lead. Confirm / reject records **who** confirmed and when, and reports show it.
+16. **Reproducibility:** every derived result (track, attribute, match, summary) stores the model name + version and key settings that produced it. Evidence packs include them.
+17. **Legal certificate:** evidence packs include a pre-filled certificate for electronic records under **Section 63, Bharatiya Sakshya Adhiniyam 2023** (replaces Evidence Act §65B), to be reviewed and signed by the responsible officer. Template to be checked once by a lawyer.
+18. **Redaction and access:** exports can blur faces of bystanders (I-5b). An optional per-tenant setting requires a second person to approve each export. Published accuracy and known-limits sheet from the §9 eval set (night, rain, crowds).
 
 ## 7. Definition of done per feature
 
 | # | Done when |
 |---|---|
-| I-1 | Lab cameras write tracks (crop, embedding, colour) under the tenant filter; retention deletes them with video; a short report gives measured tracks / camera / day, GPU overhead and storage per camera per day; backfill indexes 1 h of recorded segments in < 15 min on one GPU |
+| I-1 | Phase 0 numbers recorded in `PHASE0_MEASUREMENT.md`; lab cameras write tracks (crop, embedding, colour, model version) under the tenant filter; retention deletes them with video; a short report gives measured tracks / camera / day, GPU overhead and storage per camera per day; backfill indexes 1 h of recorded segments in < 15 min on one GPU |
 | I-2 | Eval targets in §2 met; works air-gapped with the rule-based parser; every search audited; filters shareable via URL; existing photo search available as an input on the same page |
 | I-3 | Clicking a person in lab playback returns their journey across ≥ 3 cameras with the stitched video, no photo; confirm / reject refines results; works on a camera without live AI (on-demand detect + ReID on the frame) |
-| I-4 | Create a case from an alert, add sightings / journey / notes / files, invite a member, one merged timeline; case footage survives a retention run |
-| I-5 | Case exports to a ZIP whose manifest verifies on the verify page; one changed byte fails verification; every export logged with a reason |
+| I-4 | Case audit is hash-chained and verifies; create a case from an alert, add sightings / journey / notes / files, invite a member, one merged timeline; case footage survives a retention run |
+| I-5 | Case exports to a ZIP whose manifest verifies on the verify page; one changed byte fails verification; every export logged with a reason; pack includes source-segment hashes, clock offsets, model versions, who confirmed each match, and the BSA §63 certificate draft |
 | I-6 | Density bar on lab playback (cloud and NVR); skim jumps empty stretches correctly on cloud recordings |
 | I-7 | 1 h phone video and 1 h Hikvision export upload (resumable), index and become searchable in < 30 min on one GPU; the original's SHA-256 is stored at upload |
 | I-8 | ≥ 80 % correct and cited on 100 questions; zero uncited claims; reduced mode works air-gapped |

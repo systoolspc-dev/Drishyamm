@@ -43,6 +43,7 @@ from vms_face.infra.insightface_runtime import FaceObservation, FaceRuntime, Fac
 from vms_face.infra.minio_store import ObjectStore
 from vms_face.infra.recognizers import Recognizer
 from vms_face.infra.redis_bus import RedisBus
+from vms_face.investigate.measure import TrackMeter
 from vms_face.pipeline.ingest import Frame, RTSPIngest, make_ingest
 from vms_face.infra.person_detector import get_person_detector
 from vms_face.services.detection_zones import bbox_zone, normalize_zones
@@ -188,6 +189,10 @@ class StreamOrchestrator:
         # the badge in the UI doesn't blink.
         self._last_person_count = 0
         self._person_last_run_frame = -1
+        # I-1 phase 0: count finished tracks per camera (counting only).
+        self._meter: TrackMeter | None = (
+            TrackMeter(str(ctx.camera_id)) if settings.investigate_measure_enabled else None
+        )
         self._publisher: StatePublisher = state_publisher or get_state_publisher()
         # Bounded fan-out for concurrent per-face processing within a single
         # frame; see _consume_loop. One semaphore per orchestrator (one per
@@ -330,6 +335,7 @@ class StreamOrchestrator:
                 "embed_every_n": self._ctx.embed_every_n,
                 "snapshot_top_k": self._ctx.snapshot_top_k,
             },
+            "investigate_measure": self._meter.snapshot() if self._meter is not None else {"enabled": False},
         }
 
     def _identity_stats(self) -> dict:
@@ -439,6 +445,11 @@ class StreamOrchestrator:
             get_snapshot_cache().forget(self._ctx.camera_code)
         except Exception:
             pass
+        if self._meter is not None:
+            try:
+                self._meter.close()
+            except Exception:
+                pass
         try:
             await self._snapshot_pump.aclose()
         except Exception as e:
@@ -567,6 +578,11 @@ class StreamOrchestrator:
                 now_mono = time.monotonic()
                 for dead in self._tracker.dropped_last_step:
                     self._reassoc.remember(dead.identity, dead.embedding_pool.pooled(), now_mono)
+            if self._meter is not None:
+                try:
+                    self._meter.face_step(tracked, self._tracker.dropped_last_step)
+                except Exception as e:
+                    log.warning("investigate meter failed", camera=self._ctx.camera_code, err=str(e))
 
             # ── Person count via YOLOv8 (optional, off-by-default) ──
             # Counts humans regardless of face visibility (back-of-head,
@@ -586,6 +602,11 @@ class StreamOrchestrator:
                         )
                         self._last_person_count = len(persons)
                         person_boxes_this_frame = persons
+                        if self._meter is not None:
+                            try:
+                                self._meter.person_step(persons)
+                            except Exception as e:
+                                log.warning("investigate meter failed", camera=self._ctx.camera_code, err=str(e))
                     except Exception as e:
                         log.warning("person detect failed", camera=self._ctx.camera_code, err=str(e))
                     self._person_last_run_frame = self._frame_count

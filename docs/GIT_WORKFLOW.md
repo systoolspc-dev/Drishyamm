@@ -32,7 +32,7 @@ flowchart LR
     W["Working folder<br/>(files you edit)"] -- "git add + git commit" --> R["Local history<br/>(your commits)"]
   end
   subgraph G["GitHub (origin)"]
-    FB["Your branch<br/>feature/you-task"]
+    FB["Your branch<br/>yourname/module-task"]
     M["main"]
   end
   R -- "git push" --> FB
@@ -116,18 +116,63 @@ flowchart TD
 ```bash
 git checkout main
 git pull origin main
-git checkout -b feature/priya-camera-grid
+git checkout -b priya/live-camera-grid
 ```
 
 | Command | What it does |
 |---|---|
 | `git checkout main` | Switch to the main branch. Your folder now shows main's version of the code. |
 | `git pull origin main` | Download everything merged into main since you last looked, including teammates' work. |
-| `git checkout -b feature/...` | Create a new branch from here and switch to it. Everything you do now stays on this branch. |
+| `git checkout -b yourname/module-task` | Create a new branch from here and switch to it. Everything you do now stays on this branch. |
 
 **Why in this order?** Your branch starts as a copy of whatever main is at that moment. Pull first and you start from everyone's latest code. Skip it and you start out of date and get conflicts later.
 
-**Branch names:** `feature/<name>-<what>` for new things, `fix/<name>-<what>` for bugs. Examples: `feature/rahul-login-page`, `fix/priya-stream-freeze`. Lowercase, hyphens, no spaces.
+**Branch names:** see [Branch naming](#branch-naming) below. Short version: `<yourname>/<module>-<task>`.
+
+### Branch naming
+
+Every branch starts with **your name**, then the **module**, then the **task**:
+
+```
+<yourname>/<module>-<task>          new work
+<yourname>/fix-<module>-<task>      bug fixes
+```
+
+Lowercase, words joined with hyphens, no spaces, one task per branch.
+
+| Example | What it is |
+|---|---|
+| `rahul/auth-login-page` | Rahul's new login page |
+| `priya/live-camera-grid` | Priya's camera grid change in Live View |
+| `priya/fix-stream-freeze` | Priya's fix for frozen streams |
+| `rachit/investigation-i1-search-index` | Rachit's investigation feature I-1 |
+
+**Investigation toolkit:** one branch per feature, numbered to match the feature list in [`docs/investigation/README.md`](investigation/README.md). The format is `<yourname>/investigation-i<N>-<feature>`:
+
+| Feature | Branch |
+|---|---|
+| I-1 Search index | `<yourname>/investigation-i1-search-index` |
+| I-2 Attribute / plain-language search | `<yourname>/investigation-i2-attribute-search` |
+| I-3 Click to track | `<yourname>/investigation-i3-click-to-track` |
+| I-4 Cases | `<yourname>/investigation-i4-cases` |
+| I-5 Evidence export | `<yourname>/investigation-i5-evidence-export` |
+| I-6 Activity timeline / smart skim | `<yourname>/investigation-i6-activity-timeline` |
+| I-7 File import | `<yourname>/investigation-i7-file-import` |
+| I-8 Ask Drishyam | `<yourname>/investigation-i8-ask-drishyam` |
+| I-9 Summaries | `<yourname>/investigation-i9-summaries` |
+| I-10 Vehicle journey | `<yourname>/investigation-i10-vehicle-journey` |
+
+If one feature is too big for a single PR, split it with a short suffix, e.g. `rachit/investigation-i1-search-index-schema`, then `rachit/investigation-i1-search-index-api`.
+
+**Renaming a branch** (e.g. you picked the wrong name):
+
+```bash
+git branch -m old-name new-name             # rename on your laptop
+git push -u origin new-name                 # put the new name on GitHub
+git push origin --delete old-name           # remove the old name from GitHub
+```
+
+Do this before opening a PR. If a PR is already open, close it and open a new one from the renamed branch.
 
 ### Step 2: Work and save (status, add, commit, push)
 
@@ -140,7 +185,7 @@ git add frontend/src/modules/live/Grid.jsx
 git commit -m "camera grid: fix layout on small screens"
 
 # first push of a new branch
-git push -u origin feature/priya-camera-grid
+git push -u origin priya/live-camera-grid
 # every push after that
 git push
 ```
@@ -197,8 +242,8 @@ git push
 
 Then on GitHub:
 
-1. Open the repo. A yellow banner shows *"feature/priya-camera-grid had recent pushes"*. Click **Compare & pull request**. (Or go to **Pull requests → New pull request**.)
-2. Check the direction: **base: `main` ← compare: `feature/priya-camera-grid`**.
+1. Open the repo. A yellow banner shows *"priya/live-camera-grid had recent pushes"*. Click **Compare & pull request**. (Or go to **Pull requests → New pull request**.)
+2. Check the direction: **base: `main` ← compare: `priya/live-camera-grid`**.
 3. Write a title and fill in the template: what changed, how you tested it, screenshots for UI changes, any new environment variables or database migrations.
 4. Add the reviewer and click **Create pull request**.
 
@@ -207,7 +252,7 @@ Then on GitHub:
 **When:** the reviewer asks for changes.
 
 ```bash
-# still on feature/priya-camera-grid
+# still on priya/live-camera-grid
 git add .
 git commit -m "camera grid: address review comments"
 git push
@@ -222,8 +267,8 @@ The open PR **updates itself** with the new commits. You don't open a new PR. If
 ```bash
 git checkout main
 git pull origin main                        # main now includes your merged work
-git branch -d feature/priya-camera-grid     # delete the old local branch
-git checkout -b fix/priya-next-thing        # next task
+git branch -d priya/live-camera-grid     # delete the old local branch
+git checkout -b priya/fix-stream-freeze     # next task
 ```
 
 Click **Delete branch** on the merged PR to remove it from GitHub too. Check your change on the testing server link once the deploy finishes, usually a few minutes after the merge.
@@ -265,11 +310,11 @@ The same thing as a timeline:
    │                    │                      │                         │
 main ●──────────────────●──────────────────────●(A)───────────────────────●(B)──►
      │\                                       ▲ │                        ▲
-     │ \  Priya: feature/priya-camera-grid    │ │                        │
+     │ \  Priya: priya/live-camera-grid       │ │                        │
      │  ●─────●─────●─────────────────────────┘ │  PR merged → A         │
      │     commits  push + PR                   │                        │
      │                                          │ Rahul syncs:           │
-     │   Rahul: feature/rahul-login-page        ▼ git merge origin/main  │
+     │   Rahul: rahul/auth-login-page           ▼ git merge origin/main  │
      └────●──────●──────●──────────────────────●(now has Priya's code)──●┘
           commits                                ●──── more work ───── PR merged → B
 ```
@@ -337,10 +382,10 @@ You can't push to main (it's protected), so nothing is broken. Move the commits 
 
 ```bash
 # on main, with your mistaken commits (commit anything unsaved first)
-git branch feature/you-task          # new branch that keeps your commits
+git branch yourname/module-task          # new branch that keeps your commits
 git fetch origin
 git reset --hard origin/main         # put your local main back to match GitHub
-git checkout feature/you-task        # continue on the new branch
+git checkout yourname/module-task        # continue on the new branch
 ```
 
 > ⚠️ **Careful with `reset --hard` and `push --force`.** Both can permanently throw away work. Only use `reset --hard` exactly as shown above. Never use `push --force` without asking first.
@@ -351,26 +396,26 @@ git checkout feature/you-task        # continue on the new branch
 
 | I want to... | Command |
 |---|---|
-| Start a new task | `git checkout main`<br>`git pull origin main`<br>`git checkout -b feature/name-task` |
+| Start a new task | `git checkout main`<br>`git pull origin main`<br>`git checkout -b yourname/module-task` |
 | See what I changed | `git status` · `git diff` |
 | Save my work | `git add <files>`<br>`git commit -m "area: what changed"` |
-| Upload my branch (first time) | `git push -u origin feature/name-task` |
+| Upload my branch (first time) | `git push -u origin yourname/module-task` |
 | Upload my branch (after that) | `git push` |
 | Get teammates' merged work into my branch | `git fetch origin`<br>`git merge origin/main` |
 | Switch to another branch | `git checkout branch-name` |
 | Put unfinished work aside | `git stash` → later `git stash pop` |
 | Undo changes to one file | `git restore <file>` |
 | Back out of a bad merge | `git merge --abort` |
-| Clean up after my PR merged | `git checkout main`<br>`git pull origin main`<br>`git branch -d feature/name-task` |
+| Clean up after my PR merged | `git checkout main`<br>`git pull origin main`<br>`git branch -d yourname/module-task` |
 
 ### A normal week
 
 | Day | What you do |
 |---|---|
-| **Monday** | `git checkout main` → `git pull origin main` → `git checkout -b feature/rahul-login-page`. Work, commit, push at end of day. |
+| **Monday** | `git checkout main` → `git pull origin main` → `git checkout -b rahul/auth-login-page`. Work, commit, push at end of day. |
 | **Tuesday** | Morning: `git fetch origin` + `git merge origin/main`. Work, commit, push. |
 | **Wednesday** | Sync with main, test, push, open the PR. Fix review comments, push. |
-| **Thursday** | PR merged. Check it on the testing link. `git checkout main` → `git pull origin main` → `git branch -d feature/rahul-login-page` → start the next task. |
+| **Thursday** | PR merged. Check it on the testing link. `git checkout main` → `git pull origin main` → `git branch -d rahul/auth-login-page` → start the next task. |
 
 ---
 
