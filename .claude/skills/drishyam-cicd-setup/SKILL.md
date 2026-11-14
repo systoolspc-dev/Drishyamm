@@ -123,6 +123,16 @@ Golden rule: code reaches a server only through GitHub + the pipeline.
 - **F11 Qdrant fd exhaustion (fixed 2026-11-13):** default `nofile` 1024 ran out at 04:45 UTC ("Too many open files"), Qdrant hung, `smart-cam-ai` couldn't start after a recreate. Compose now sets `ulimits.nofile 65536` for qdrant.
 - **F12 Redis keeps showing as "Recreate" in `docker compose up --dry-run`** with unchanged config (probably a newer local `redis:7-alpine` image). Recreate services with `--no-deps <svc>` to avoid bouncing Redis by accident; deploy.sh should be aware.
 
+- **F13 First auto-deploy outage (2026-11-14, merge of PR #2):** the host's `valkey.service`
+  (enabled at boot; used by the separate voice-cloning project via `localhost:6379`) grabbed
+  127.0.0.1:6379 while `up -d` recreated the Redis container. Redis failed to bind, and its
+  dependents (app, ai, ai-worker, stitch worker) stayed "Created", so the site was down. The
+  recreated Redis then came up with **no network**. Recovery: user ran `sudo systemctl stop
+  valkey`, then `docker compose up -d`, `--force-recreate --no-deps redis`, and a restart of the
+  Redis clients. Fix: `REDIS_HOST_PORT` (server `.env` = 6380), so Drishyam and voice-cloning
+  never share a Redis. After it deploys, the user re-enables valkey. The two untracked host
+  scripts are in `.git/info/exclude` (local only) so deploys see a clean tree.
+
 ## Decisions
 
 - **D1 Entrypoint: DECIDED nginx + tailscale serve (2026-11-13).** a small `nginx` service in a testing overlay
