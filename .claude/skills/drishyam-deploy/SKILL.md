@@ -15,8 +15,8 @@ assuming a workflow, script, nginx entrypoint or Tailscale serve config exists.
    a server, no `scp`, no hot-patching inside containers, not even "temporarily".
    If asked to, explain the rule and offer a branch + PR. A demo hotfix already made
    on a server gets committed to a branch and PR'd **the same day**.
-2. **Never push to `main` or `production`.** Work on `feature/<name>-<task>` /
-   `fix/...` / `chore/...`, open a PR into `main`. Releases are PR `main` → `production`.
+2. **Never push to `main` or `production`.** Work on `<name>/<module>-<task>` /
+   `<name>/fix-<module>-<task>` (investigation: `<name>/investigation-i<N>-<feature>`), open a PR into `main`. Releases are PR `main` → `production`.
 3. **Never commit secrets**: `.env*` (except `*.env.example`), keys, certs, Tailscale
    auth keys, runner tokens.
 4. **Ask before destructive or hard-to-undo actions**: `git reset --hard`, `git clean`,
