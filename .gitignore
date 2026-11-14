@@ -102,7 +102,9 @@ tmp/
 nul
 
 # ── local agent / tooling state ─────────────────────────────────────────────
-.claude/
+.claude/*
+# Project skills ARE shared: they hold the deploy runbook (see docs/DEPLOYMENT.md).
+!.claude/skills/
 .playwright-mcp/
 
 # ── OS / editor ─────────────────────────────────────────────────────────────

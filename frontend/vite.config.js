@@ -105,6 +105,12 @@ export default defineConfig(({ mode }) => ({
     },
   },
   server: {
+    // Vite 7 answers only localhost by default. Hosts that reach the dev server
+    // through a proxy (the testing server's Tailscale name) are listed in
+    // VITE_ALLOWED_HOSTS, comma separated. See deploy/testing/.
+    allowedHosts: process.env.VITE_ALLOWED_HOSTS
+      ? process.env.VITE_ALLOWED_HOSTS.split(',').map((h) => h.trim()).filter(Boolean)
+      : [],
     watch: {
       // Polling is enabled via CHOKIDAR_USEPOLLING in Docker on Windows so Vite
       // sees host edits. Without an ignore list the watcher stat()s every file

@@ -1,0 +1,46 @@
+# Testing-server overlay: single HTTPS origin over Tailscale.
+#
+# Enabled on the testing server only, through its (gitignored) root .env:
+#   COMPOSE_FILE=docker-compose.yml:deploy/testing/docker-compose.testing.yml
+# so every plain `docker compose ...` (and scripts/deploy.sh) includes it.
+#
+# Then `tailscale serve --bg 8080` publishes 127.0.0.1:8080 as
+# https://<machine>.<tailnet>.ts.net (tailnet members only, never Funnel).
+# See docs/DEPLOYMENT.md.
+#
+# Values come from the root .env (TEST_ORIGIN is the ts.net URL, no trailing slash):
+#   PUBLIC_API_URL=${TEST_ORIGIN}            PUBLIC_APP_URL=${TEST_ORIGIN}
+#   PUBLIC_HLS_URL=${TEST_ORIGIN}/hls        PUBLIC_WEBRTC_URL=${TEST_ORIGIN}/live
+#   PUBLIC_AI_URL=${TEST_ORIGIN}/ai          PUBLIC_WHEP_BASE=${TEST_ORIGIN}
+#   CORS_ORIGINS=${TEST_ORIGIN},http://localhost:5173
+#   VITE_ALLOWED_HOSTS=<machine>.<tailnet>.ts.net
+#   HOST_IP=<tailscale 100.x IP>,<LAN IP>    (WebRTC ICE candidates)
+
+services:
+  edge:
+    image: nginx:1.27-alpine
+    container_name: drishyam-edge
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"     # loopback only; tailscale serve is the way in
+    volumes:
+      - ./deploy/testing/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/edge-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      smart-cam-backend:
+        condition: service_started
+      smart-cam-app:
+        condition: service_started
+
+  smart-cam-app:
+    environment:
+      # Browser-facing bases (see frontend/src/core/config/endpoints.js).
+      VITE_AI_BASE_URL: ${PUBLIC_AI_URL:-http://localhost:8001}
+      # WHEP base is the ORIGIN: the backend's webrtcUrl already carries /live/<path>.
+      VITE_STREAM_SERVICE_WEBRTC_BASE: ${PUBLIC_WHEP_BASE:-http://localhost:8889}
+      # Vite 7 rejects unknown Host headers; allow the ts.net name.
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-}
