@@ -1,7 +1,8 @@
 # Deployment tooling
 
 Everything needed around the core stack (`../docker-compose.yml`) for real
-sites. Start with [../docs/SETUP.md](../docs/SETUP.md).
+sites. How code gets onto a server (GitHub → pipeline → testing server →
+production) is in [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
 
 | Folder | Use it when |
 |---|---|

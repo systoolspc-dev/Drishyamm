@@ -14,6 +14,11 @@
 # Big GPU (60+ cameras with face recognition): add the shard layout
 #   docker compose -f docker-compose.yml -f docker-compose.scale.yml up -d
 #
+# Host binding: app/API/AI/HLS/WHEP/SRT ports listen on ${BIND_ADDR:-0.0.0.0}.
+# Servers reached through a proxy (the testing server's Tailscale edge) set
+# BIND_ADDR=127.0.0.1 in .env so only the proxy is exposed. RTSP 8554 and WebRTC
+# media 8189/udp always stay on all interfaces (cameras, relays, browsers).
+#
 # Service NAMES are part of the contract (code and env refer to smart-cam-ai,
 # smart-cam-backend, mediamtx, postgres, ...). Rename containers freely,
 # never the services. See docs/SETUP.md and docs/HOW_IT_WORKS.md.
@@ -191,6 +196,13 @@ services:
     image: qdrant/qdrant:v1.12.4
     container_name: drishyam-qdrant
     restart: unless-stopped
+    # Qdrant (RocksDB segments + one socket per client) ran out of the default
+    # 1024 file handles on 2026-11-13: "Too many open files", every request hung,
+    # and smart-cam-ai could not start. Give it room.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     environment:
       QDRANT__SERVICE__API_KEY: "${QDRANT_API_KEY:-}"
     ports:
@@ -272,10 +284,10 @@ services:
       - "127.0.0.1:9997:9997"   # control API (backend only)
       - "127.0.0.1:9998:9998"   # Prometheus metrics
       - "8554:8554"             # RTSP
-      - "8898:8888"             # HLS
-      - "8889:8889"             # WebRTC (WHEP)
+      - "${BIND_ADDR:-0.0.0.0}:8898:8888"             # HLS
+      - "${BIND_ADDR:-0.0.0.0}:8889:8889"             # WebRTC (WHEP)
       - "8189:8189/udp"         # WebRTC media
-      - "8890:8890"             # SRT
+      - "${BIND_ADDR:-0.0.0.0}:8890:8890"             # SRT
     volumes:
       - ./media/stream-service/mediamtx.yml:/mediamtx.yml:ro
       - ${RECORDINGS_DIR:-./data/recordings}:/recordings
@@ -350,7 +362,7 @@ services:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
     ports:
-      - "5000:5000"
+      - "${BIND_ADDR:-0.0.0.0}:5000:5000"
     volumes:
       - ./backend:/app
       - backend-node-modules:/app/node_modules
@@ -383,7 +395,7 @@ services:
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:
-      - "5173:5173"
+      - "${BIND_ADDR:-0.0.0.0}:5173:5173"
     volumes:
       - ./frontend:/app
       - app-node-modules:/app/node_modules
@@ -400,7 +412,7 @@ services:
     # and every request hangs. Without it the container exits and restarts.
     command: ["sh", "-c", "alembic upgrade head && uvicorn vms_face.api.main:app --host 0.0.0.0 --port 8001"]
     ports:
-      - "8001:8001"
+      - "${BIND_ADDR:-0.0.0.0}:8001:8001"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/healthz',timeout=4).status==200 else 1)"]
       interval: 30s
@@ -476,7 +488,7 @@ services:
       - ./ai/head-count/config:/srv/head-count/config
       - ./ai/head-count/models:/srv/head-count/models
     ports:
-      - "8020:8000"
+      - "${BIND_ADDR:-0.0.0.0}:8020:8000"
     depends_on:
       smart-cam-backend:
         condition: service_started
@@ -540,7 +552,7 @@ services:
       - ./ai/activity-monitor/config:/srv/activity-monitor/config
       - activity-monitor-data:/srv/activity-monitor/data
     ports:
-      - "8010:8000"
+      - "${BIND_ADDR:-0.0.0.0}:8010:8000"
     depends_on:
       redis:
         condition: service_started
