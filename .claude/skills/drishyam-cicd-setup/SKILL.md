@@ -53,10 +53,10 @@ Golden rule: code reaches a server only through GitHub + the pipeline.
 | 1 | Verify via ts.net: login, API, Socket.IO, live + playback video, AI | curl-verified (app, /api, /ai, /ai/ws, socket.io, /hls, /live OPTIONS); **browser test by user pending** |
 | 1 | Lock-down: bind ports to loopback, firewalld, SSH (ask first) | **ports done 2026-11-13**: `BIND_ADDR=127.0.0.1` in server `.env` (compose ports `${BIND_ADDR:-0.0.0.0}:…`); only RTSP 8554/tcp + WebRTC 8189/udp stay public. `mongodb`/`mongo-express` recreated on 127.0.0.1 (same `mongodb_data` volume, `mongo-net`); old ones kept stopped as `mongodb-old`/`mongo-express-old`. **firewalld + SSH/RDP: awaiting user** |
 | 1 | Persistence: tailscaled, docker, stack (`restart: unless-stopped`) on boot; real reboot test | **passed 2026-11-13 13:20 IST**: docker + tailscaled active, Funnel on, all 16 stack containers + edge + mongodb/mongo-express up, backend/ai/edge healthy, public URL 200 for /, /api, /ai, socket.io; loopback bindings and qdrant nofile kept |
-| 2 | Self-hosted runner `self-hosted,testing`, systemd service, user `systools-pc` | todo (needs token) |
-| 2 | `scripts/deploy.sh` (generic, reusable by prod) with pre-migration DB backup | todo |
-| 2 | `.github/workflows/deploy-testing.yml` | todo |
-| 2 | `.github/workflows/ci.yml` (PRs into main + production; only checks that pass) | todo: run suites first |
+| 2 | Self-hosted runner `self-hosted,testing`, systemd service, user `systools-pc` | registered 2026-11-14 as `drishyam-test` (`~/actions-runner`, token fetched via `gh api`); **service install needs user sudo** (+ `chcon -t bin_t runsvc.sh`, SELinux enforcing) |
+| 2 | `scripts/deploy.sh` (generic, reusable by prod) with pre-migration DB backup | written, shellcheck clean, dirty-tree refusal tested |
+| 2 | `.github/workflows/deploy-testing.yml` | written, actionlint clean; repo var `DEPLOY_DIR` set |
+| 2 | `.github/workflows/ci.yml` (PRs into main + production; only checks that pass) | written; suites run locally (see F10); first GitHub run on the phase-2 PR decides the final set |
 | 3 | `CONTRIBUTING.md`, `.github/pull_request_template.md`, GitHub click-list | todo |
 
 ## Environment (Phase 0 facts)
@@ -114,11 +114,12 @@ Golden rule: code reaches a server only through GitHub + the pipeline.
 - **F9 Docs gaps:** `docs/SETUP.md` doesn't exist (README/deploy README linked it).
   `scripts/backup-databases.sh` is referenced by `docs/BACKUP_RESTORE.md` but missing.
   `docs/GO_LIVE.md` mentions a `ci.yml` that doesn't exist (no `.github/` at all).
-- **F10 Tests for CI:** backend `npm test` (jest), frontend `npm run lint`, `npm test`,
-  `npm run build`; Python tests in `ai/face-service/vms_face/tests`,
-  `ai/head-count/tests`, `ai/activity-monitor/tests`. **Pass/fail not checked yet.** Run them
-  and include only passing ones in `ci.yml`, then report the failures to the user.
-
+- **F10 Test results (2026-11-14, run locally in the stack's containers):** backend jest 30/33 suites
+  pass (failing: `streaming.engine` requires deleted `MediaMTXEngine`, `streaming.factory` expects
+  `mediamtx` vs `stream-service`, `tmpDocCheck.cameraHealth.row` Date vs string); frontend `npm test`
+  107/107 on Node 22 (the glob needs Node 22; Node 20 finds no files), `vite build` OK, **eslint 94
+  errors**; face-service unittest 43/43; head-count pytest 103/104; activity-monitor pytest 43/44.
+  Failures are excluded by name in `ci.yml`, not silently disabled.
 - **F11 Qdrant fd exhaustion (fixed 2026-11-13):** default `nofile` 1024 ran out at 04:45 UTC ("Too many open files"), Qdrant hung, `smart-cam-ai` couldn't start after a recreate. Compose now sets `ulimits.nofile 65536` for qdrant.
 - **F12 Redis keeps showing as "Recreate" in `docker compose up --dry-run`** with unchanged config (probably a newer local `redis:7-alpine` image). Recreate services with `--no-deps <svc>` to avoid bouncing Redis by accident; deploy.sh should be aware.
 

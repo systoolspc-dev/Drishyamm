@@ -1,0 +1,116 @@
+# Checks for pull requests into main and production. GitHub-hosted runners only:
+# PR code (possibly from forks of this public repo) never touches our servers.
+#
+# Only checks that pass today are enforced. Known failures are excluded by name
+# and listed below; fix them, then remove the exclusion:
+#   backend  test/streaming.engine.test.js       requires a deleted module (MediaMTXEngine)
+#   backend  test/streaming.factory.test.js      expects engine name "mediamtx" (now "stream-service")
+#   backend  test/tmpDocCheck.cameraHealth.row.test.js  Date vs ISO-string comparison
+#   head-count       TestDetailLevelFlowsThrough::test_valid_level_is_carried
+#   activity-monitor test_requires_at_least_one_stream
+#   frontend lint    94 eslint errors (not run here yet)
+name: CI
+
+on:
+  pull_request:
+    branches: [main, production]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (jest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: jest
+        run: >-
+          npx jest --ci
+          --testPathIgnorePatterns
+          'test/streaming\.engine\.test\.js'
+          'test/streaming\.factory\.test\.js'
+          'test/tmpDocCheck\.cameraHealth\.row\.test\.js'
+          '/node_modules/'
+
+  frontend:
+    name: Frontend (tests + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22   # `node --test "src/**/*.test.js"` needs Node 22 glob support
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+
+  ai-face-service:
+    name: AI face-service (unittest, CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ai/face-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai/face-service/requirements.txt
+      - name: Install (GPU-only packages swapped for CPU onnxruntime)
+        run: |
+          grep -vE '^(onnxruntime-gpu|tensorrt)' requirements.txt > /tmp/requirements-cpu.txt
+          pip install -r /tmp/requirements-cpu.txt onnxruntime
+      - name: unittest
+        working-directory: ai/face-service/vms_face
+        run: python -m unittest discover -s tests -t .
+
+  ai-edge-services:
+    name: AI ${{ matrix.service }} (pytest, CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: head-count
+            deselect: tests/test_source_caps.py::TestDetailLevelFlowsThrough::test_valid_level_is_carried
+          - service: activity-monitor
+            deselect: tests/test_config.py::test_requires_at_least_one_stream
+    defaults:
+      run:
+        working-directory: ai/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: ai/${{ matrix.service }}/pyproject.toml
+      - name: Install (CPU torch)
+        run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev]"
+      - name: pytest
+        run: python -m pytest -q --deselect "${{ matrix.deselect }}" tests

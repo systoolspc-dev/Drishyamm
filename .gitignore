@@ -119,3 +119,6 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 *~
+
+# Deploy state on servers (scripts/deploy.sh)
+.deploy/
