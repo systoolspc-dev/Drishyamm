@@ -32,8 +32,13 @@ Investigation flow for the user: **find** (I-1/I-2) → **follow** (I-3, the exi
 **review** (I-6) → **case** (I-4) → **evidence** (I-5) → **ask** (I-8). The toolkit WRAPS the journey.
 
 Build order (strict): I-1 → I-2 → I-5 → I-3 → I-4 → I-6 → I-7 → I-8 → I-9 → I-10.
-Branches: one per feature (`feature/investigation-index`, `feature/investigation-search`,
-`feature/evidence-export`, …), small PRs to `main`, the manager merges. **Never commit to main.**
+Branches: one per feature, named `<yourname>/investigation-i<N>-<feature>`, small PRs to `main`,
+the manager merges. **Never commit to main.** Use exactly these slugs:
+`i1-search-index`, `i2-attribute-search`, `i3-click-to-track`, `i4-cases`, `i5-evidence-export`,
+`i6-activity-timeline`, `i7-file-import`, `i8-ask-drishyam`, `i9-summaries`, `i10-vehicle-journey`
+(e.g. `rachit/investigation-i1-search-index`). Split a large feature with a suffix:
+`rachit/investigation-i1-search-index-schema`. Before starting work, check `git branch --show-current`
+matches the feature being built; if not, tell the user instead of committing there.
 
 ## Existing journey (reuse, don't rewrite) — `ai/face-service/vms_face/`
 
@@ -84,6 +89,13 @@ with a vector seed (`query_appearance` on `vms_tracks`) + stitch.
 9. Retention: index data lives as long as its video, except case-held items.
 10. Licences checked for every weight/dataset; big weights via Git LFS (`.gitattributes`: onnx, pt, safetensors, …).
 11. Git: feature branch → PR → manager merges.
+Forensic-grade (README §6 12–18, mandatory; toolkit stays inside Drishyam for now):
+12. SHA-256 recording segments / uploads at write time; export re-checks. 13. Store camera/NVR clock offset + NTP status; reports state it.
+14. Hash-chained investigation/evidence audit + verify routine. 15. Matches are leads: show confidence, record who confirmed/rejected.
+16. Store model name+version+key settings on every derived result. 17. Evidence pack includes BSA 2023 §63 certificate draft.
+18. Export redaction (blur bystanders), optional two-person export approval, published accuracy/limits sheet.
+Phase 0 meter: `vms_face/investigate/measure.py` (`investigate_measure_enabled`), runbook `docs/investigation/PHASE0_MEASUREMENT.md`.
+Licence flag: Ultralytics YOLOv8 is AGPL-3.0 — needs commercial licence or a permissive detector before customer rollout.
 
 ## Definition of done (README §7, short)
 I-1 lab tracks with crop/embedding/colour under tenant filter, retention deletes them, report of tracks/camera/day + GPU + storage, 1 h backfill < 15 min ·
@@ -95,7 +107,7 @@ I-7 1 h phone + Hikvision import indexed < 30 min, SHA-256 at upload · I-8 ≥ 
 I-9 digest with linked sentences · I-10 vehicle across ≥ 3 cameras with one plate read.
 
 ## Per-PR checklist
-- Branch from fresh `main`; one feature; flag off by default.
+- Branch from fresh `main`, named `<yourname>/investigation-i<N>-<feature>`; one feature; flag off by default.
 - Tests: AI `unittest` in container, backend `npm test` (3 known stale failures: streaming.engine, streaming.factory, tmpDocCheck), frontend `npm test` + `npm run build`.
 - Tenant test + audit call present; no change to `vms_appearance` or photo-journey behaviour.
 - Commit/PR only when the user says so.

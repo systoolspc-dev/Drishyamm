@@ -108,6 +108,21 @@ SNAPSHOT_UPLOAD_LATENCY = Histogram(
 # ─── Track / match outcome ──────────────────────────────────────────────────
 TRACKS_OPENED = Counter("vms_tracks_opened_total", "New tracks created", ["camera_id"])
 TRACKS_CLOSED = Counter("vms_tracks_closed_total", "Tracks expired", ["camera_id"])
+
+# ─── Investigation index measurement (I-1 phase 0, investigate_measure_enabled) ─
+# kind: face | person. kept: yes = would be indexed (long enough, enough hits),
+# no = junk (flicker, < investigate_min_track_seconds).
+INVESTIGATE_TRACKS_CLOSED = Counter(
+    "vms_investigate_tracks_closed_total",
+    "Finished tracks seen by the investigation index meter",
+    ["camera_id", "kind", "kept"],
+)
+INVESTIGATE_TRACK_DURATION = Histogram(
+    "vms_investigate_track_duration_seconds",
+    "Duration of finished tracks (kept only)",
+    ["kind"],
+    buckets=(1, 2, 5, 10, 20, 30, 60, 120, 300, 900, 1800),
+)
 MATCHES = Counter(
     "vms_matches_total",
     "Match results",
