@@ -113,16 +113,6 @@ main() {
   step "5/7 docker compose build + up"
   docker compose build --quiet
   docker compose up -d --remove-orphans
-  # The edge mounts deploy/testing/nginx.conf as a single file. `up -d` only
-  # recreates on a compose change, and a checkout replaces the file (new
-  # inode), so the running edge would keep the old config — even through
-  # `nginx -s reload`. Recreate it when its config changed (~1 s blip).
-  if docker compose config --services 2>/dev/null | grep -qx edge \
-     && [[ "$prev" != "$sha" ]] \
-     && ! git diff --quiet "$prev" "$sha" -- deploy/testing/nginx.conf; then
-    echo "    edge: nginx.conf changed -> recreate edge"
-    docker compose up -d --no-deps --force-recreate edge
-  fi
 
   # ── 6. health + migrations ────────────────────────────────────────────────
   step "6/7 health checks"
