@@ -10,8 +10,6 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-dist.next
-dist.prev
 *.local
 
 # Local env files — NEVER commit real values. Keep .env.example as the template.

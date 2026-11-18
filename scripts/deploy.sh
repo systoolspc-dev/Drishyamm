@@ -16,8 +16,7 @@
 #   3. Back up MySQL (drishyamvms) + Postgres (vms_face) to $BACKUP_DIR.
 #   4. npm ci (backend/frontend) when a lockfile changed: node_modules live in
 #      named volumes, so a rebuilt image alone wouldn't bring new dependencies.
-#   5. docker compose build; on the testing edge, a production build of the
-#      console (frontend/dist); then up -d (migrations run as containers start).
+#   5. docker compose build, then up -d (migrations run as the containers start).
 #   6. Health checks, then explicit migrations (fail loudly if a migration fails).
 #   7. Record the deployed SHA in .deploy/last-deployed and .deploy/history.log.
 #
@@ -26,7 +25,6 @@
 #   BACKUP_DIR      where DB dumps go                    (default: ~/drishyam-backups)
 #   BACKUP_KEEP     dumps to keep                        (default: 20)
 #   SKIP_BACKUP=1   skip step 3
-#   SKIP_FRONTEND_BUILD=1  keep the current frontend/dist (testing edge only)
 #   HEALTH_URLS     space-separated "url=timeout_s" pairs (default: app, backend, AI, edge)
 #   DEPLOY_ACTOR    who triggered it (default: $GITHUB_ACTOR or $USER)
 #
@@ -114,22 +112,6 @@ main() {
   # ── 5. build + up ─────────────────────────────────────────────────────────
   step "5/7 docker compose build + up"
   docker compose build --quiet
-  # Testing edge only: build the operator console for it to serve
-  # (deploy/testing/nginx.conf). Built inside smart-cam-app so it bakes in
-  # exactly the VITE_* the dev server runs with; into dist.next, then swapped,
-  # so a failed build leaves the previous one serving. Runs as the container's
-  # user, so the swap happens in there too (the files are its own).
-  if docker compose config --services 2>/dev/null | grep -qx edge \
-     && [[ "${SKIP_FRONTEND_BUILD:-0}" != 1 ]]; then
-    echo "    frontend: production build for the edge"
-    docker compose run --rm --no-deps -T -e VITE_COPY_PUBLIC_DIR=0 smart-cam-app sh -ec '
-      rm -rf dist.next
-      npx vite build --base=/ --outDir dist.next --emptyOutDir --logLevel warn
-      test -s dist.next/index.html
-      rm -rf dist.prev
-      if [ -d dist ]; then mv dist dist.prev; fi
-      mv dist.next dist'
-  fi
   docker compose up -d --remove-orphans
   # The edge mounts deploy/testing/nginx.conf as a single file. `up -d` only
   # recreates on a compose change, and a checkout replaces the file (new

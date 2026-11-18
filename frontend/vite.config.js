@@ -52,9 +52,6 @@ export default defineConfig(({ mode }) => ({
       : []),
   ],
   build: {
-    // The testing server serves public/ in place (deploy/testing/nginx.conf),
-    // so its build skips copying it (LFS demo videos). Default unchanged.
-    copyPublicDir: process.env.VITE_COPY_PUBLIC_DIR !== '0',
     rollupOptions: {
       output: {
         // ── Vendor splitting ────────────────────────────────────────────────
@@ -125,8 +122,6 @@ export default defineConfig(({ mode }) => ({
         '**/node_modules/**',
         '**/.git/**',
         '**/dist/**',
-        '**/dist.next/**',   // testing deploy builds here, then swaps (scripts/deploy.sh)
-        '**/dist.prev/**',
         '**/public/demos/**',
       ],
     },

@@ -25,10 +25,6 @@ services:
       - "127.0.0.1:8080:80"     # loopback only; tailscale serve is the way in
     volumes:
       - ./deploy/testing/nginx.conf:/etc/nginx/nginx.conf:ro
-      # The console's production build (frontend/dist, made by deploy.sh) and
-      # public/. The directory is mounted, not dist itself, so the swap of a
-      # new build into place is seen without recreating the edge.
-      - ./frontend:/srv/frontend:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/edge-health"]
       interval: 30s
