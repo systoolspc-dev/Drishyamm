@@ -19,7 +19,7 @@ import investigateService, { cropUrl, journeyService } from '@/core/services/inv
 import { useAuthStore } from '@/core/store/authStore';
 import { makeEntitlement } from '@/core/nav/entitlements';
 import { cn } from '@/core/lib/utils';
-import { STATUS_LABEL, groupCandidates, routeLabel, spanMinutes, togetherLabel } from './journey-model';
+import { STATUS_LABEL, groupCandidates, loadRecentPeople, routeLabel, spanMinutes, togetherLabel } from './journey-model';
 import { isImported, playbackLink, whenLabel } from './search-model';
 import EvidenceExportDialog from './EvidenceExportDialog';
 import { rangeAround } from './evidence-model';
@@ -38,14 +38,9 @@ function PickSomeone() {
   const [error, setError] = useState(null);
   const [indexOff, setIndexOff] = useState(false);
   useEffect(() => {
-    // Same check as Smart Search: with the index switched off there is nobody to
-    // pick, so say that instead of showing a failed search.
-    investigateService.status()
-      .then((st) => {
-        if (!st?.enabled) { setIndexOff(true); return null; }
-        return investigateService.search({ q: 'a person', topK: 60 })
-          .then((d) => setPeople([...d.results].sort((a, b) => new Date(b.first_seen) - new Date(a.first_seen)).slice(0, 30)));
-      })
+    // Same check as Smart Search: with the index off there is nobody to pick (journey-model).
+    loadRecentPeople(investigateService)
+      .then((r) => (r.indexOff ? setIndexOff(true) : setPeople(r.people)))
       .catch((e) => setError(errText(e)));
   }, []);
   return (

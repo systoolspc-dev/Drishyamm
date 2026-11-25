@@ -15,6 +15,7 @@ const FormData = require('form-data');
 
 const asyncHandler = require('../middleware/asyncHandler');
 const AppError = require('../utils/AppError');
+const { isIndexOff, indexOffError } = require('../utils/aiIndexOff');
 const logger = require('../config/logger');
 const { audit } = require('../utils/audit');
 const { aiAuthHeader } = require('../utils/aiTenant');
@@ -55,20 +56,12 @@ function decorate(results, cameras) {
   }));
 }
 
-const INDEX_OFF = 'The investigation tools aren’t running on this server yet: the search index is switched off. '
-  + 'Ask Drishyam support to turn it on; people are indexed from then on.';
-
 function mapUpstreamError(err, where) {
   const status = err.response?.status || 502;
   const detail = err.response?.data?.detail || err.response?.data?.error || err.message;
   logger.warn('investigate proxy failed', { where, status, detail: typeof detail === 'string' ? detail : JSON.stringify(detail) });
-  // The AI answers 404 "investigation index is not enabled" on every
-  // /investigate route while INVESTIGATE_INDEX_ENABLED is off: say so plainly,
-  // whichever page asked (search, track, ask, summary, journey, synopsis…).
-  const indexOff = status === 404 && /investigation index is not enabled/i.test(String(detail || ''));
-  if (indexOff || (status === 404 && where.startsWith('search'))) {
-    return AppError.public(INDEX_OFF, 503);
-  }
+  // Index switched off: say so plainly, whichever page asked (utils/aiIndexOff).
+  if (isIndexOff(err) || (status === 404 && where.startsWith('search'))) return indexOffError();
   if (err.code === 'ECONNABORTED' || /timeout/i.test(err.message || '')) {
     return AppError.public('Smart Search is still starting up. Try again in a minute.', 503);
   }
@@ -210,7 +203,7 @@ const trackAt = asyncHandler(async (req, res) => {
     audit('investigate.track_at', { req, targetType: 'track', targetId: data.track_id, meta: { cameraCode, ts } });
     res.json(data);
   } catch (err) {
-    if (err.response?.status === 404) throw new AppError('No one indexed at that spot. Click on a person while they are on screen.', 404);
+    if (err.response?.status === 404 && !isIndexOff(err)) throw new AppError('No one indexed at that spot. Click on a person while they are on screen.', 404);
     throw mapUpstreamError(err, 'track-at');
   }
 });
@@ -349,7 +342,7 @@ const synopsis = asyncHandler(async (req, res) => {
     audit('investigate.synopsis', { req, targetType: 'camera', targetId: monitorId, meta: { from, to, speed: data.speed } });
     res.status(202).json(data);
   } catch (err) {
-    if (err.response?.status === 404) throw new AppError(err.response.data?.detail || 'Nothing to make a synopsis of.', 404);
+    if (err.response?.status === 404 && !isIndexOff(err)) throw new AppError(err.response.data?.detail || 'Nothing to make a synopsis of.', 404);
     throw mapUpstreamError(err, 'synopsis');
   }
 });
@@ -392,7 +385,7 @@ const transcribe = asyncHandler(async (req, res) => {
     audit('investigate.speech_transcribe', { req, targetType: 'camera', targetId: monitorId, meta: { from, to } });
     res.status(202).json(data);
   } catch (err) {
-    if (err.response?.status === 404) throw new AppError(err.response.data?.detail || 'Nothing to transcribe.', 404);
+    if (err.response?.status === 404 && !isIndexOff(err)) throw new AppError(err.response.data?.detail || 'Nothing to transcribe.', 404);
     throw mapUpstreamError(err, 'transcribe');
   }
 });

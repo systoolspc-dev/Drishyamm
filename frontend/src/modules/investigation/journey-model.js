@@ -51,3 +51,21 @@ export function spanMinutes(stops = []) {
   const b = new Date(stops[stops.length - 1].last_seen).getTime();
   return Math.max(0, Math.round((b - a) / 60_000));
 }
+
+/**
+ * Click to track's "pick someone" list. Asks the index's status FIRST: with the
+ * index switched off there is nobody to pick, so it never searches (a search
+ * would only fail) and says so instead.
+ *
+ * @param {{ status: () => Promise<{enabled?: boolean}>, search: (a: object) => Promise<{results?: object[]}> }} svc
+ * @returns {Promise<{ indexOff: boolean, people: object[] | null }>}
+ */
+export async function loadRecentPeople(svc, limit = 30) {
+  const st = await svc.status();
+  if (!st || st.enabled !== true) return { indexOff: true, people: null };
+  const d = await svc.search({ q: 'a person', topK: 60 });
+  const people = [...(d?.results || [])]
+    .sort((a, b) => new Date(b.first_seen) - new Date(a.first_seen))
+    .slice(0, limit);
+  return { indexOff: false, people };
+}

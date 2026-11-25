@@ -20,6 +20,7 @@ const multer = require('multer');
 
 const asyncHandler = require('../middleware/asyncHandler');
 const AppError = require('../utils/AppError');
+const { INDEX_OFF, isIndexOff, indexOffError } = require('../utils/aiIndexOff');
 const logger = require('../config/logger');
 const config = require('../config/env');
 const { audit } = require('../utils/audit');
@@ -95,7 +96,7 @@ async function startIndex(req, row) {
     }, { headers: aiAuthHeader(req.user) });
     await row.update({ status: data.status === 'ready' ? 'ready' : 'indexing', progress: data.progress || 0, error: null });
   } catch (e) {
-    const msg = e.response?.data?.detail || e.message;
+    const msg = isIndexOff(e) ? INDEX_OFF : (e.response?.data?.detail || e.message);
     await row.update({ status: 'failed', error: `Could not start indexing: ${typeof msg === 'string' ? msg : 'AI error'}`.slice(0, 500) });
   }
 }
@@ -189,6 +190,8 @@ const remove = asyncHandler(async (req, res) => {
     await ai.delete(`/investigate/imports/${row.id}`, { headers: aiAuthHeader(req.user) });
   } catch (e) {
     logger.warn('imports: AI delete failed', { id: row.id, error: e.message });
+    // With the index off the AI can't remove this video's people; retrying won't help until it's on.
+    if (isIndexOff(e)) throw indexOffError();
     throw AppError.public('Could not remove the indexed people for this video. Try again.', 502);
   }
   fs.rmSync(path.dirname(row.path), { recursive: true, force: true });
