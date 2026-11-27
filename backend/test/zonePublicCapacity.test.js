@@ -165,10 +165,36 @@ test('a row written before alertOnEntry was honoured still raises an intrusion',
   expect(typesFired()).toEqual(['zone.intrusion']);
 });
 
-/* ──────── A capacity zone was always meant to skip intrusion ────────── */
+/* ──────── The two rules are independent ─────────────────────────────── */
 
-test('a restricted zone with a capacity rule alerts on the cap, not on entry', async () => {
+test('a restricted zone with a capacity rule alerts on BOTH', async () => {
+  // This test used to assert "on the cap, NOT on entry", under a heading
+  // saying a capacity zone was always meant to skip intrusion. That premise
+  // was wrong, and it cost a real deployment a no-entry log that stayed
+  // empty: a zone that had once been a counting area with a limit of 4 kept
+  // the 4, so `cap > 0` took the capacity branch and `continue`d past the
+  // entry alarm for ever. The operator saw capacity breaches and an empty
+  // no-entry page, with nothing anywhere saying the limit had switched the
+  // alarm off.
+  //
+  // They answer different questions. A capacity says HOW MANY may be in
+  // here; `alertOnEntry` says WHETHER ANYONE may. A zone can need both, and
+  // one must not silently cancel the other.
   const { userId } = scenario({ alertOnEntry: true, maxOccupancy: 1 });
+  await pollOverCapacity(userId, [box('Asha Patel', 40), box('Ravi Kumar', 60)]);
+
+  expect(typesFired()).toContain('occupancy.threshold');
+  expect(typesFired()).toContain('zone.intrusion');
+});
+
+test('and an ordinary counting room is still not spammed on entry', async () => {
+  // The reason the old premise looked right: a canteen with a limit must not
+  // alarm on every person who walks in. It still does not -- but that is
+  // `alertOnEntry: false`, which is what a counting area carries
+  // (restricted-zones-api toApi: `alertOnEntry: access.mode !== 'public'`),
+  // and NOT the capacity. The protection comes from the mode the operator
+  // chose, not from a side effect of having set a number.
+  const { userId } = scenario({ alertOnEntry: false, maxOccupancy: 1 });
   await pollOverCapacity(userId, [box('Asha Patel', 40), box('Ravi Kumar', 60)]);
 
   expect(typesFired()).toContain('occupancy.threshold');

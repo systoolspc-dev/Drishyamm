@@ -39,7 +39,7 @@ import { isConsentRefusal } from '@/core/services/aiConsent';
 import { FULL_PCT, PROFILE_BY_ID, ROOM_PROFILES } from './occupancy-data';
 import { cameraFailures, partialNote } from './room-messages';
 import { boundaryOn, cameraPayload, normalizeZone, normalizeZones } from './zone-model';
-import { defaultAccess } from './zone-setup/access-data';
+import { alarmOnlyZone, defaultAccess } from './zone-setup/access-data';
 import { deleteZone, listZones, putZone } from './zone-setup/restricted-zones-api';
 
 const KEY = 'drishyam.occupancy.rooms.v1';
@@ -298,9 +298,27 @@ export async function saveRoom(room, opts = {}) {
   // ── the cameras: what the detector counts and alarms on ─────────────────
   const registry = opts.registry || fallbackRegistry(zone.cameras[0], room.cameraId, opts.cameraEnabled);
   const touched = [...new Set([...zone.cameras, ...(prev?.cameras || [])])];
+  // A NO-ENTRY zone does not count anybody, so saving one must not switch
+  // head counting on for its cameras.
+  //
+  // `enable` was every camera the zone is drawn on, whatever kind of zone it
+  // was. The reasoning held for a counting area -- a zone that is not
+  // counting would never show a number, so saving it is the operator asking
+  // for one -- and was simply carried over to a kind of zone it was never
+  // about. Converting a counting area into a strict lockout therefore left
+  // head counting switched on, holding one of the detector's eight slots for
+  // a number nobody would ever read.
+  //
+  // It is NOT switched off either, and that restraint is deliberate. Head
+  // counting may be on because of another zone, or because somebody ticked
+  // it on the Head Count page. Turning it off here would be the same mistake
+  // in the other direction: this save deciding something it was not asked
+  // about. The operator is told instead, and the Head Count page is where
+  // they act on it.
+  const alarmOnly = alarmOnlyZone(zone);
   const { failed, unknown, needsAi } = await pushCameras(next, touched, registry, {
     clear: opts.clearBoundary ? zone.cameras : [],
-    enable: zone.cameras,
+    enable: alarmOnly ? [] : zone.cameras,
   });
   // A camera with no registry row was never asked at all, so it is named
   // rather than counted -- see room-messages.js for why that distinction is

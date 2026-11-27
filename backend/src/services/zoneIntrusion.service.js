@@ -275,16 +275,31 @@ function handleFrame({ userId, frame }) {
         if (!snap && box.snap) snap = box.snap;
       }
 
-      // Capacity/occupancy-threshold mode (framework §6 row g): a zone with a
-      // maxOccupancy alerts when the HEAD COUNT crosses the cap (K-of-N confirmed)
-      // and stays quiet until it falls below cap − margin (deadband) — no
-      // flapping. Capacity zones don't also fire intrusion alerts.
+      // Capacity/occupancy-threshold (framework §6 row g): a zone with a
+      // maxOccupancy alerts when the HEAD COUNT crosses the cap (K-of-N
+      // confirmed) and stays quiet until it falls below cap − margin
+      // (deadband) — no flapping.
+      //
+      // THE TWO RULES ARE INDEPENDENT, and this used to `continue`.
+      //
+      // A capacity limit answered "how many may be in here"; entry alerting
+      // answers "may anyone be in here at all". They are different questions
+      // and a zone can need both — but a `continue` here meant any capacity
+      // at all CANCELLED the entry alarm, silently. So a no-entry zone that
+      // had once been a counting area with a limit of 4 kept the 4, took this
+      // branch for ever, and logged `occupancy.threshold` while the operator
+      // watched the no-entry log stay empty. Nothing said the limit had
+      // switched the alarm off, because nothing knew it had.
+      //
+      // Both now run. They cannot double-report the same thing: capacity
+      // counts EVERYONE inside against the limit and is tracked by
+      // capacityTracker; entry counts only people the allow-list does not
+      // excuse and is tracked by zoneOcc. Separate state, separate cooldowns,
+      // separate event types, and a public zone is still stopped from
+      // alarming on entry by the `alertOnEntry` check below.
       const cap = Number(zone.maxOccupancy) || 0;
-      if (cap > 0) {
-        if (capacityTracker.update(zone.id, total, cap) === 'breach') {
-          fireAlert(userId, frame.monitorId, zone, total, snap, 'capacity');
-        }
-        continue;
+      if (cap > 0 && capacityTracker.update(zone.id, total, cap) === 'breach') {
+        fireAlert(userId, frame.monitorId, zone, total, snap, 'capacity');
       }
 
       // A PUBLIC zone does not alarm on entry. `alertOnEntry` is what the zone

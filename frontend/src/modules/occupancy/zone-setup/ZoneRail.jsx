@@ -90,6 +90,9 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/core/ui/dropdown-menu';
 import Panel from '@/core/ui/panel';
+import { makeEntitlement } from '@/core/nav/entitlements';
+import { aiSetupPath } from '@/core/services/aiCamera';
+import { useAuthStore } from '@/core/store/authStore';
 import { nfmt } from '../occupancy-data';
 import { colorsOnCamera, zonesOnCamera } from '../zone-model';
 import { zoneRows } from './zone-rows';
@@ -111,6 +114,10 @@ const MENU_BTN = 'absolute rounded-md p-1 text-fg-muted transition hover:bg-surf
 export default function ZoneRail({
   mode, onMode, cameras, zones, saved, regionZones, gates = {}, pendingId = null,
   activeZoneId, activeCam, activeGate, onPick, onAddZone, onDeleteZone, onPickGate, onStopGate, ready,
+  // monitorId -> `GET /ai/cameras` row. Optional, and null means "diagnose
+  // nothing": a rail rendered before the registry loads must not claim a zone
+  // is broken, so every row's `blocked` stays null until this arrives.
+  camByMonitor = null,
 }) {
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -207,6 +214,7 @@ export default function ZoneRail({
           <>
             <ZoneList
               activeZoneId={activeZoneId}
+              camByMonitor={camByMonitor}
               onDeleteZone={onDeleteZone}
               onMode={onMode}
               onPick={onPick}
@@ -536,13 +544,23 @@ function CreateAction({ icon: Icon, onClick, children }) {
 
 function ZoneList({
   regionZones, zones, saved, activeZoneId, pendingId, onPick, onDeleteZone, onMode, query,
+  camByMonitor,
 }) {
+  // The plan is read HERE rather than threaded down from the page, because
+  // this list is the only thing in the rail that asks about it -- and `has`
+  // already answers "unknown" the safe way: until the user loads, features
+  // are null and every key reads as on, so a row says "Not in your plan" only
+  // once the account really has been seen not to include it.
+  const { has } = makeEntitlement(useAuthStore((state) => state.user));
+  const plan = { headcount: has('headcount'), restricted_zone: has('restricted_zone') };
   // Every zone that EXISTS -- stored, live, or drafted and not yet saved --
   // searched and ordered. Built in zone-rows.js, which is also where the
   // reason this cannot be `regionZones` is written down: that array is the
   // dashboard's live-only one, and a saved zone on a camera nobody counts is
   // absent from it by design.
-  const ordered = zoneRows({ saved, regionZones, draft: zones[activeZoneId], query });
+  const ordered = zoneRows({
+    saved, regionZones, draft: zones[activeZoneId], query, camByMonitor, plan,
+  });
 
   if (!ordered.length) {
     // A zone is always drawn on a camera, so there is nothing to offer here
@@ -576,26 +594,52 @@ function ZoneList({
         // here stores has no record to remove, and a delete that quietly does
         // nothing is worse than no delete at all.
         const removable = Boolean(saved[z.id]) || z.id === pendingId;
+        // A block the OPERATOR can clear, as against one only a sales
+        // conversation can: it decides both the icon and whether a fix link
+        // is offered at all.
+        const fixable = Boolean(z.blocked && z.blocked.code !== 'plan');
         return (
           <li key={z.id}>
-            <div className="relative flex items-start">
+            {/* The border, background and hover live on the WRAPPER, not on
+                the button: a blocked row carries a fix LINK, and an anchor
+                inside a button is invalid markup and a split hit area. Both
+                sit in one bordered box, so the row still reads as one thing
+                and still highlights as one. */}
+            <div className={`relative rounded-lg border transition ${on ? ROW_ON : ROW_OFF}`}>
               <button
                 aria-current={on ? 'true' : undefined}
-                className={`flex w-full items-start gap-2 rounded-lg border py-2 pl-2.5 text-left transition ${removable ? 'pr-8' : 'pr-2.5'} ${on ? ROW_ON : ROW_OFF}`}
+                className={`flex w-full items-start gap-2 rounded-lg py-2 pl-2.5 text-left ${removable ? 'pr-8' : 'pr-2.5'}`}
                 onClick={() => onPick(z.id, z.cameras?.[0])}
                 type="button"
               >
-                {/* Three states, not two: a stored zone that cannot work is
+                {/* Four states, not two: a stored zone that cannot work is
                     neither done nor merely unstarted, and a green tick on it
-                    would be the same lie as hiding it was. */}
+                    would be the same lie as hiding it was. The wrench is the
+                    state that adds "and you can clear this yourself".
+                    A PLAN block keeps the ordinary icon on purpose: nothing
+                    is wrong with the zone, the account simply does not
+                    include the feature, and a fault marker would blame the
+                    operator for something no setup step fixes. */}
                 {z.broken
                   ? <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0 text-warning-ink" strokeWidth={2.25} />
-                  : z.configured
-                    ? <CheckCircle2 className="mt-px h-3.5 w-3.5 shrink-0 text-success" strokeWidth={2.25} />
-                    : <Circle className="mt-px h-3.5 w-3.5 shrink-0 text-fg-disabled" strokeWidth={2} />}
+                  : fixable
+                    ? <Wrench className="mt-px h-3.5 w-3.5 shrink-0 text-warning-ink" strokeWidth={2.25} />
+                    : z.configured
+                      ? <CheckCircle2 className="mt-px h-3.5 w-3.5 shrink-0 text-success" strokeWidth={2.25} />
+                      : <Circle className="mt-px h-3.5 w-3.5 shrink-0 text-fg-disabled" strokeWidth={2} />}
                 <span className="min-w-0 flex-1">
                   <span className={`block break-words text-heading font-semibold leading-snug ${on ? 'text-brand-ink' : 'text-fg'}`}>
                     {z.label}
+                    {/* A zone that ALARMS on entry says so beside its name.
+                        The access mode was computed for this list all along
+                        and only ever reached the subtitle, as a fallback
+                        BEHIND the profile -- so the zones that matter most
+                        were the least likely to say what they were. */}
+                    {z.restricted ? (
+                      <span className="ml-1.5 align-middle text-micro font-bold uppercase text-danger">
+                        No entry
+                      </span>
+                    ) : null}
                   </span>
                   <span className="mt-0.5 block text-small text-fg-subtle">
                     {z.subtitle}
@@ -612,6 +656,27 @@ function ZoneList({
                 </span>
                 {z.locked ? <Lock className="mt-px h-3 w-3 shrink-0 text-danger" strokeWidth={2.5} /> : null}
               </button>
+              {/* WHY this zone is not working, and the one panel where it is
+                  put right. The link is offered ONLY when there is something
+                  to switch on: a plan block's line is grey and ends there,
+                  because a button that cannot work is the defect this page
+                  has spent the branch removing. */}
+              {z.blocked ? (
+                <p className="flex flex-wrap items-baseline gap-x-1.5 pb-1.5 pl-7 pr-2.5 text-small leading-snug">
+                  <span className={`font-semibold ${fixable ? 'text-warning-ink' : 'text-fg-muted'}`}>
+                    {z.blocked.label}
+                  </span>
+                  {z.blocked.cameraId ? (
+                    <Link
+                      className="font-semibold text-brand hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                      title="Open this camera in Camera Setup, AI Detection"
+                      to={aiSetupPath(z.blocked.cameraId)}
+                    >
+                      Fix
+                    </Link>
+                  ) : null}
+                </p>
+              ) : null}
               {removable ? (
                 <ZoneRowMenu
                   className="right-1 top-1.5"

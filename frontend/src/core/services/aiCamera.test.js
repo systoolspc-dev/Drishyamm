@@ -50,7 +50,10 @@ test('features: flags and drawn shapes show when AI is on', () => {
   });
   // No 'Journey': journey mapping is a feature built on the face model's
   // output, not a model, and Person Tracker owns the per-camera choice.
-  assert.deepEqual(activeFeatureLabels(r), ['Face', 'Count', 'Zone']);
+  // 'Footfall' and not 'Count': the fixture draws a LINE, which is footfall.
+  // Head count needs a counting AREA, and this camera has none -- the two
+  // used to be one row and could not tell you that.
+  assert.deepEqual(activeFeatureLabels(r), ['Face', 'Footfall', 'Zone']);
 });
 
 test('features: head count is READY only when a gate line is drawn', () => {
@@ -79,7 +82,8 @@ test('features: this panel lists models, so alerts and journey are not rows', ()
   for (const key of ['unknown_alerts', 'watchlist_alerts', 'journey']) {
     assert.equal(f.find((x) => x.key === key), undefined, `${key} must not be a row`);
   }
-  assert.deepEqual(f.map((x) => x.key), ['face', 'head_count', 'restricted_zone', 'zone_body']);
+  assert.deepEqual(f.map((x) => x.key),
+    ['face', 'head_count', 'footfall', 'restricted_zone', 'zone_body']);
 });
 
 test('the flags the panel stopped showing are still carried through a save', () => {
@@ -92,27 +96,36 @@ test('the flags the panel stopped showing are still carried through a save', () 
 
 test('a setup row links to the camera it was opened from', () => {
   const f = cameraFeatures(row({ ai: { enabled: true } }));
-  const gate = f.find((x) => x.key === 'head_count');
+  const count = f.find((x) => x.key === 'head_count');
+  const foot = f.find((x) => x.key === 'footfall');
   const zone = f.find((x) => x.key === 'restricted_zone');
   // Both used to link to a bare /occupancy/zone-setup, which opens on whatever
   // camera that page picks for itself.
-  assert.equal(featureSetupPath(gate, row()), '/occupancy/zone-setup?gate=m1');
-  assert.equal(featureSetupPath(zone, row()), '/occupancy/zone-setup?cam=m1');
+  assert.equal(featureSetupPath(foot, row()), '/occupancy/zone-setup?gate=m1');
+  // Head count is an AREA, so it opens the camera, not the line editor.
+  assert.equal(featureSetupPath(count, row()), '/occupancy/zone-setup?zone=m1');
+  // `zone`, NOT `cam`. ZoneSetup's zone lookup falls through to opening a
+  // camera on its own whole view when no zone has that id, which is exactly
+  // "draw the first zone on this camera". `cam` only picks which camera
+  // inside an ALREADY-CHOSEN zone is shown, so it was silently ignored and
+  // the link landed on whichever zone the page defaulted to.
+  assert.equal(featureSetupPath(zone, row()), '/occupancy/zone-setup?zone=m1');
+  assert.notEqual(featureSetupPath(zone, row()), '/occupancy/zone-setup?cam=m1');
 });
 
 test('a setup link falls back to the bare page rather than a broken one', () => {
   const f = cameraFeatures(row({ ai: { enabled: true } }));
-  const gate = f.find((x) => x.key === 'head_count');
-  assert.equal(featureSetupPath(gate, {}), '/occupancy/zone-setup');
-  assert.equal(featureSetupPath(gate, undefined), '/occupancy/zone-setup');
+  const foot = f.find((x) => x.key === 'footfall');
+  assert.equal(featureSetupPath(foot, {}), '/occupancy/zone-setup');
+  assert.equal(featureSetupPath(foot, undefined), '/occupancy/zone-setup');
   assert.equal(featureSetupPath({}, row()), '');
 });
 
 test('a monitorId with URL characters is encoded', () => {
   const f = cameraFeatures(row({ ai: { enabled: true } }));
-  const gate = f.find((x) => x.key === 'head_count');
+  const foot = f.find((x) => x.key === 'footfall');
   assert.equal(
-    featureSetupPath(gate, { monitorId: 'cam 1&x=2' }),
+    featureSetupPath(foot, { monitorId: 'cam 1&x=2' }),
     '/occupancy/zone-setup?gate=cam%201%26x%3D2',
   );
 });

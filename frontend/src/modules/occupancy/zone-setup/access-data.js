@@ -61,6 +61,20 @@ export const SELECTABLE_ACCESS_MODES = ACCESS_MODES.filter((m) => !m.unavailable
 /** Why this mode cannot be chosen, or null when it can. */
 export const accessModeUnavailable = (id) => ACCESS_MODE_BY_ID[id]?.unavailable || null;
 
+/**
+ * Does this zone ONLY alarm, with nothing to count?
+ *
+ * A strict lockout admits nobody, so there is no occupancy to report and no
+ * reason for its cameras to hold a head-count slot. Saving one used to switch
+ * head counting ON for every camera it was drawn on, because that rule was
+ * written for counting areas -- where a zone with no number is useless -- and
+ * carried over to a kind of zone it was never about.
+ *
+ * Kept here, beside the modes themselves, so the save path and anything else
+ * that needs the question ask it the same way.
+ */
+export const alarmOnlyZone = (zone) => zone?.access?.mode === 'lockout';
+
 /** Starting set of roles. Editable per zone — there is no directory to read. */
 export const DEFAULT_ROLES = [
   'IT Dept',

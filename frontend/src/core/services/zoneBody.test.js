@@ -235,7 +235,7 @@ test('every other feature keeps its shape', () => {
   // 'journey' and the two alert rows are deliberately absent: this panel
   // lists the models a camera runs. Journey mapping belongs to Person
   // Tracker, and an alert is not a model.
-  for (const key of ['face', 'head_count', 'restricted_zone']) {
+  for (const key of ['face', 'head_count', 'footfall', 'restricted_zone']) {
     assert.equal(find(f, key).hidden, false, `${key} must stay visible`);
     assert.equal(find(f, key).forced, undefined, `${key} must not be forced`);
   }

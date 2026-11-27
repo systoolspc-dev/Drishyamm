@@ -241,9 +241,11 @@ function SetupDrawer({ camera, onClose, onSaved }) {
                     <Link to={featureSetupPath(f, camera)} className="inline-flex items-center gap-1 text-small font-medium text-success-ink hover:underline">
                       <Check className="h-3.5 w-3.5" /> Ready
                     </Link>
+                    {/* Head count only. Footfall is configured through the
+                        footfall service and has no per-camera switch here. */}
                     {f.key === 'head_count' ? (
                       <Switch
-                        label="Count people crossing this gate line"
+                        label="Count people inside this area"
                         onChange={(v) => updateDraft('headcountEnabled', v)}
                         value={draft.headcountEnabled === true}
                       />
